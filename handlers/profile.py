@@ -1,9 +1,11 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ConversationHandler, CallbackQueryHandler, MessageHandler, filters
-from storage import load_users, save_users, save_user_async
+from storage import load_users, save_users
 
 
 ASK_GENDER, ASK_REGION, ASK_COUNTRY = range(3)
+
+
 
 
 async def start_profile(update: Update, context):
@@ -16,6 +18,8 @@ kb = InlineKeyboardMarkup([
 ])
 await update.message.reply_text('Choose gender:', reply_markup=kb)
 return ASK_GENDER
+
+
 
 
 async def gender_cb(update, context):
@@ -34,6 +38,8 @@ await query.edit_message_text('Gender saved. Send your region name (text):')
 return ASK_REGION
 
 
+
+
 async def region_text(update, context):
 users = load_users()
 p = users.get(str(update.effective_user.id), {})
@@ -42,6 +48,8 @@ users[str(update.effective_user.id)] = p
 save_users(users)
 await update.message.reply_text('Region saved. Now send your country:')
 return ASK_COUNTRY
+
+
 
 
 async def country_text(update, context):
