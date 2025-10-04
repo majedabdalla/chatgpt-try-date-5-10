@@ -7,6 +7,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+
+
 def build_metadata_text(room: dict, sender_profile: dict, receiver_profile: Optional[dict]):
 created = datetime.utcfromtimestamp(room.get('created_at', 0)).isoformat()
 lines = [f"📢 Room #{room.get('room_id')}", f"🕒 Created: {created}", '']
@@ -16,12 +18,14 @@ lines.append(f"👥 Receiver: {receiver_profile.get('user_id')} (username: @{rec
 return "\n".join(lines)
 
 
+
+
 def approve_premium(user_id: int, days: int = 90) -> bool:
+"""Approve a user for premium for `days` days from now."""
 users = load_users()
-p = users.get(str(user_id), {})
+p = users.get(str(user_id))
 if not p:
-# create a profile if missing
-p = {'user_id': user_id}
+return False
 expiry = (datetime.utcnow() + timedelta(days=days)).isoformat()
 p['is_premium'] = True
 p['premium_expiry'] = expiry
@@ -30,7 +34,10 @@ save_users(users)
 return True
 
 
+
+
 async def revoke_expired_job(context):
+"""JobQueue callback to revoke expired premiums and notify admin group if revocations occurred."""
 try:
 users = load_users()
 now = datetime.utcnow()
