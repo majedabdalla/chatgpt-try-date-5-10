@@ -2,5 +2,8 @@
     "start": "Welcome to AnonindoChat Bot! Choose your language:",
     "main_menu": "Main Menu:",
     "profile_complete": "Profile setup complete.",
-    "profile_gender": "Select your gender:"
+    "profile_gender": "Select your gender:",
+    "searching_partner": "Looking for a partner...",
+    "no_partner_found": "No partners available now. Try again later.",
+    "invalid_filter_format": "Invalid format. Type: gender,region,country"
 }
