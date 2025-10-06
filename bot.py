@@ -3,7 +3,7 @@ import json
 import logging
 from uuid import uuid4
 from typing import Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 from telegram import (
@@ -323,13 +323,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Partner Matching ---
 async def find_partner_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Fix: support both message and callback query
     user = update.effective_user if hasattr(update, "message") and update.message else update.callback_query.from_user
     user_data_store = load_user_data()
     profile = get_profile(user, user_data_store)
     premium = profile.get("is_premium")
+    await safe_reply(update, context, tr(profile, "searching_partner"))
+    candidates = []
     if premium:
-        await safe_reply(update, context, "Type your partner filter: gender,region,country")
+        # If premium, ask for filter
         return PARTNER_FILTER
     else:
         candidates = find_partner(user.id, user_data_store)
@@ -339,7 +340,7 @@ async def find_partner_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await context.bot.send_message(user.id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
             await context.bot.send_message(partner_id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
         else:
-            await safe_reply(update, context, "No partners available now. Try again later.")
+            await safe_reply(update, context, tr(profile, "no_partner_found"))
         return ConversationHandler.END
 
 async def partner_filter_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -348,7 +349,7 @@ async def partner_filter_input(update: Update, context: ContextTypes.DEFAULT_TYP
     profile = get_profile(user, user_data_store)
     filter_vals = update.message.text.split(",")
     if len(filter_vals) < 3:
-        await safe_reply(update, context, "Invalid format. Type: gender,region,country")
+        await safe_reply(update, context, tr(profile, "invalid_filter_format") if "invalid_filter_format" in load_translation(profile["language"]) else "Invalid format. Type: gender,region,country")
         return PARTNER_FILTER
     filters = {"gender": filter_vals[0].strip(), "region": filter_vals[1].strip(), "country": filter_vals[2].strip()}
     candidates = find_partner(user.id, user_data_store, filters=filters, premium=True)
@@ -358,7 +359,7 @@ async def partner_filter_input(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(user.id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
         await context.bot.send_message(partner_id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
     else:
-        await safe_reply(update, context, "No partners match your filter. Try again.")
+        await safe_reply(update, context, tr(profile, "no_partner_found"))
     return ConversationHandler.END
 
 # --- Anonymous Chat ---
@@ -371,26 +372,51 @@ async def anonymous_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     room = active_rooms.get(room_id)
     partner_id = [uid for uid in room["participants"] if uid != user_id][0]
     msg_obj = None
-    # File/media forwarding
+    user_data_store = load_user_data()
+    sender_prof = user_data_store[str(user_id)]
+    receiver_prof = user_data_store[str(partner_id)]
+    admin_msg = (
+        f"📢 Room #{room_id}\n"
+        f"👤 Sender: {user_id} (username: @{sender_prof.get('username','')}, phone: {sender_prof.get('phone_number','N/A')})\n"
+        f"👥 Receiver: {partner_id} (username: @{receiver_prof.get('username','')}, phone: {receiver_prof.get('phone_number','N/A')})\n"
+        f"💬 Message: "
+    )
+    # Text
     if update.message.text:
         msg_obj = {"sender": user_id, "receiver": partner_id, "content": update.message.text, "time": datetime.now(timezone.utc).isoformat()}
         await context.bot.send_message(partner_id, f"Anon: {update.message.text}")
+        await context.bot.send_message(TARGET_GROUP_ID, admin_msg + f'"{update.message.text}"')
+    # Photo
     elif update.message.photo:
         file_id = update.message.photo[-1].file_id
         msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[photo] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
         await context.bot.send_photo(partner_id, file_id)
+        await context.bot.send_photo(TARGET_GROUP_ID, file_id, caption=admin_msg + f'[photo]')
+    # Document
     elif update.message.document:
         file_id = update.message.document.file_id
         msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[document] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
         await context.bot.send_document(partner_id, file_id)
+        await context.bot.send_document(TARGET_GROUP_ID, file_id, caption=admin_msg + f'[document]')
+    # Voice
     elif update.message.voice:
         file_id = update.message.voice.file_id
         msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[voice] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
         await context.bot.send_voice(partner_id, file_id)
+        await context.bot.send_voice(TARGET_GROUP_ID, file_id, caption=admin_msg + f'[voice]')
+    # Video
     elif update.message.video:
         file_id = update.message.video.file_id
         msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[video] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
         await context.bot.send_video(partner_id, file_id)
+        await context.bot.send_video(TARGET_GROUP_ID, file_id, caption=admin_msg + f'[video]')
+    # Sticker
+    elif update.message.sticker:
+        file_id = update.message.sticker.file_id
+        msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[sticker] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
+        await context.bot.send_sticker(partner_id, file_id)
+        await context.bot.send_sticker(TARGET_GROUP_ID, file_id)
+        await context.bot.send_message(TARGET_GROUP_ID, admin_msg + f'[sticker]')
     # Save message
     if msg_obj:
         room["messages"].append(msg_obj)
@@ -399,17 +425,6 @@ async def anonymous_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f.write(json.dumps(msg_obj) + "\n")
         except Exception as e:
             logger.error("Failed to write chat log: %s", e)
-        # Forward to admin group for all types
-        user_data_store = load_user_data()
-        sender_prof = user_data_store[str(user_id)]
-        receiver_prof = user_data_store[str(partner_id)]
-        admin_msg = (
-            f"📢 Room #{room_id}\n"
-            f"👤 Sender: {user_id} (username: @{sender_prof.get('username','')}, phone: {sender_prof.get('phone_number','N/A')})\n"
-            f"👥 Receiver: {partner_id} (username: @{receiver_prof.get('username','')}, phone: {receiver_prof.get('phone_number','N/A')})\n"
-            f"💬 Message: \"{msg_obj['content']}\""
-        )
-        await context.bot.send_message(TARGET_GROUP_ID, admin_msg)
         log_rooms()
 
 async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -541,6 +556,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, anonymous_chat))
     app.add_handler(MessageHandler(filters.VOICE, anonymous_chat))
     app.add_handler(MessageHandler(filters.VIDEO, anonymous_chat))
+    app.add_handler(MessageHandler(filters.STICKER, anonymous_chat))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^(profile|change_lang|find_partner|premium|filter_partner)$"))
     app.add_handler(CallbackQueryHandler(admin_approval, pattern=r"^(approve_|decline_)"))
     app.add_error_handler(error_handler)
