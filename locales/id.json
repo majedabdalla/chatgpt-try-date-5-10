@@ -2,5 +2,8 @@
     "start": "Selamat datang di AnonindoChat Bot! Pilih bahasa Anda:",
     "main_menu": "Menu utama:",
     "profile_complete": "Pengaturan profil selesai.",
-    "profile_gender": "Pilih jenis kelamin Anda:"
+    "profile_gender": "Pilih jenis kelamin Anda:",
+    "searching_partner": "Mencari partner...",
+    "no_partner_found": "Tidak ada partner yang tersedia saat ini. Silakan coba lagi nanti.",
+    "invalid_filter_format": "Format tidak valid. Tulis: jenis kelamin,region,negara"
 }
