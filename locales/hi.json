@@ -2,5 +2,8 @@
     "start": "AnonindoChat Bot में आपका स्वागत है! अपनी भाषा चुनें:",
     "main_menu": "मुख्य मेनू:",
     "profile_complete": "प्रोफ़ाइल सेटअप पूरा हुआ।",
-    "profile_gender": "लिंग चुनें:"
+    "profile_gender": "लिंग चुनें:",
+    "searching_partner": "साथी की तलाश कर रहे हैं...",
+    "no_partner_found": "कोई साथी उपलब्ध नहीं है। बाद में पुनः प्रयास करें।",
+    "invalid_filter_format": "अमान्य प्रारूप। टाइप करें: लिंग,क्षेत्र,देश"
 }
