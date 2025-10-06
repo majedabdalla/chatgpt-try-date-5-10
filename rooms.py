@@ -1,35 +1,26 @@
-
 import uuid, time
-from typing import Optional, Dict
+from db import db, insert_room, get_room, update_room
+from models import default_room
 
-users_online = set()
-rooms = {}
-user_to_room = {}
+users_online = set()  # Keep in memory for now
 
-def create_room(user1: int, user2: int) -> str:
+async def create_room(user1: int, user2: int):
     room_id = uuid.uuid4().hex[:8]
-    rooms[room_id] = {
-        'room_id': room_id,
-        'users': [user1, user2],
-        'created_at': time.time(),
-        'messages': [],
-    }
-    user_to_room[user1] = room_id
-    user_to_room[user2] = room_id
+    room_data = default_room(room_id, user1, user2)
+    await insert_room(room_data)
+    users_online.discard(user1)
+    users_online.discard(user2)
     return room_id
 
-def close_room(room_id: str):
-    room = rooms.pop(room_id, None)
-    if not room:
-        return
-    for uid in room.get('users', []):
-        user_to_room.pop(uid, None)
+async def close_room(room_id: str):
+    await update_room(room_id, {"active": False})
 
-def find_match_for(user_id: int, prefer_filters: dict = None) -> Optional[int]:
-    for candidate in list(users_online):
-        if candidate != user_id and candidate not in user_to_room:
-            return candidate
-    return None
+async def find_match_for(user_id: int, prefer_filters=None):
+    # Prefer filters: gender, region, country, premium_only
+    candidates = [uid for uid in users_online if uid != user_id]
+    # TODO: Use DB to filter based on matching_preferences
+    # For now, just pick the first available
+    return candidates[0] if candidates else None
 
 def add_to_pool(user_id: int):
     users_online.add(user_id)

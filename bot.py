@@ -1,786 +1,92 @@
 import os
-import json
 import logging
-from uuid import uuid4
-from typing import Dict, Any
-from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, User
-)
+from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, MessageHandler, ConversationHandler, ContextTypes, filters
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
+from db import db
+from handlers.profile import start_profile, gender_cb, region_text, country_text, prefs_text
+from handlers.premium import start_upgrade, handle_proof, admin_callback
+from handlers.chat import process_message
+from handlers.report import report_partner
+from handlers.admincmds import (
+    admin_block, admin_unblock, admin_message, admin_stats, admin_blockword, admin_unblockword,
+    admin_userinfo, admin_roominfo, admin_viewhistory
+)
+from admin import downgrade_expired_premium
 
-# --- Load environment variables ---
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-TARGET_GROUP_ID = int(os.getenv("TARGET_GROUP_ID"))
-PAYEER_ACCOUNT = os.getenv("PAYEER_ACCOUNT")
-BITCOIN_WALLET_ADDRESS = os.getenv("BITCOIN_WALLET_ADDRESS")
+ADMIN_GROUP_ID = int(os.getenv("ADMIN_GROUP_ID"))
 
-USER_DATA_FILE = "user_data.json"
-ROOMS_FILE = "rooms.json"
-LOCALES_DIR = "locales"
-CHAT_LOG_FILE = "chatlog.txt"
-
-LANGUAGES = {
-    "en": "English",
-    "ar": "العربية",
-    "hi": "हिन्दी",
-    "id": "Bahasa Indonesia"
-}
-
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-active_rooms: Dict[str, Dict[str, Any]] = {}
-user_room_map: Dict[int, str] = {}
+async def start(update: Update, context):
+    await update.message.reply_text("Welcome! Use /profile to set up your profile.")
 
-def load_json(file_path, default):
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return default
-
-def save_json(file_path, data):
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-def load_user_data():
-    return load_json(USER_DATA_FILE, {})
-
-def save_user_data(data):
-    save_json(USER_DATA_FILE, data)
-
-def log_rooms():
-    save_json(ROOMS_FILE, active_rooms)
-
-def load_translation(lang):
-    path = os.path.join(LOCALES_DIR, f"{lang}.json")
-    if not os.path.isfile(path):
-        path = os.path.join(LOCALES_DIR, "en.json")
-    return load_json(path, {})
-
-def tr(user, key):
-    lang = user.get("language", "en")
-    translations = load_translation(lang)
-    return translations.get(key, key)
-
-def get_profile(user, user_data_store):
-    uid = str(user.id)
-    profile = user_data_store.get(uid)
-    name = getattr(user, "full_name", None) or getattr(user, "first_name", None) or ""
-    if not profile:
-        profile = {
-            "user_id": user.id,
-            "username": user.username or "",
-            "phone_number": "",
-            "language": "en",
-            "name": name,
-            "gender": "",
-            "region": "",
-            "country": "",
-            "is_premium": False,
-            "premium_expiry": "",
-            "blocked": False
-        }
-        user_data_store[uid] = profile
-        save_user_data(user_data_store)
-    else:
-        if not profile.get('name') and name:
-            profile['name'] = name
-            save_user_data(user_data_store)
-    return profile
-
-def update_profile(user_id, updates, user_data_store):
-    uid = str(user_id)
-    user_data_store[uid].update(updates)
-    save_user_data(user_data_store)
-
-def check_premium_expiry(profile):
-    expiry = profile.get("premium_expiry")
-    if expiry:
-        expiry_date = datetime.strptime(expiry, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        if expiry_date < datetime.now(timezone.utc):
-            profile["is_premium"] = False
-            profile["premium_expiry"] = ""
-            user_data_store = load_user_data()
-            user_data_store[str(profile["user_id"])] = profile
-            save_user_data(user_data_store)
-
-def safe_reply(update, context, text):
-    try:
-        if hasattr(update, "message") and update.message:
-            return update.message.reply_text(text)
-        elif hasattr(update, "callback_query") and update.callback_query and update.callback_query.message:
-            return update.callback_query.message.reply_text(text)
-        elif getattr(update, "effective_user", None):
-            return context.bot.send_message(update.effective_user.id, text)
-    except Exception as e:
-        logger.error("safe_reply error: %s", e)
-
-def is_admin(user_id):
-    return user_id == ADMIN_ID
-
-def log_room_message(room_id, msg_obj):
-    if not os.path.isdir("rooms"):
-        os.makedirs("rooms")
-    room_file = f"rooms/room_{room_id}.json"
-    try:
-        with open(room_file, "r", encoding="utf-8") as f:
-            history = json.load(f)
-    except Exception:
-        history = []
-    history.append(msg_obj)
-    with open(room_file, "w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2, ensure_ascii=False)
-
-def get_room_history(room_id):
-    room_file = f"rooms/room_{room_id}.json"
-    try:
-        with open(room_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-def get_user_history(user_id):
-    user_msgs = []
-    if not os.path.isdir("rooms"):
-        return []
-    for fname in os.listdir("rooms"):
-        if fname.startswith("room_") and fname.endswith(".json"):
-            room_file = os.path.join("rooms", fname)
-            try:
-                with open(room_file, "r", encoding="utf-8") as f:
-                    history = json.load(f)
-                for msg in history:
-                    if msg["sender"] == user_id or msg["receiver"] == user_id:
-                        user_msgs.append(msg)
-            except Exception:
-                continue
-    return user_msgs
-
-def format_user_info(user_profile):
-    return (
-        f"Name: {user_profile.get('name', '')}\n"
-        f"Username: @{user_profile.get('username', '')}\n"
-        f"Phone: {user_profile.get('phone_number', '')}\n"
-        f"User ID: {user_profile.get('user_id', '')}\n"
-    )
-
-def get_profile_picture(context, user_id):
-    try:
-        photos = context.bot.get_user_profile_photos(user_id, limit=1)
-        if photos.total_count > 0:
-            return photos.photos[0][0].file_id
-    except Exception:
-        return None
-    return None
-
-def language_keyboard():
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton(v, callback_data=f"lang_{k}")] for k, v in LANGUAGES.items()]
-    )
-
-def gender_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("Male", callback_data="gender_Male"),
-            InlineKeyboardButton("Female", callback_data="gender_Female"),
-            InlineKeyboardButton("Other", callback_data="gender_Other")
-        ]
-    ])
-
-def region_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("Asia", callback_data="region_Asia"),
-            InlineKeyboardButton("Europe", callback_data="region_Europe"),
-            InlineKeyboardButton("Other", callback_data="region_Other")
-        ]
-    ])
-
-def back_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]])
-
-def menu_keyboard(profile):
-    buttons = [
-        [InlineKeyboardButton("🧑 Profile", callback_data="profile"), InlineKeyboardButton("🌐 Language", callback_data="change_lang")],
-        [InlineKeyboardButton("🔎 Find Partner", callback_data="find_partner"), InlineKeyboardButton("💎 Premium", callback_data="premium")]
-    ]
-    if profile.get("is_premium"):
-        buttons.append([InlineKeyboardButton("Filter Partner", callback_data="filter_partner")])
-    return InlineKeyboardMarkup(buttons)
-
-def payment_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Pay via Payeer", url=f"https://payeer.com/en/account/{PAYEER_ACCOUNT}/")],
-        [InlineKeyboardButton("Pay via Bitcoin", url=f"https://www.blockchain.com/explorer/addresses/btc/{BITCOIN_WALLET_ADDRESS}")]
-    ])
-
-def create_room(u1, u2):
-    room_id = str(uuid4())[:8]
-    now = datetime.now(timezone.utc).isoformat()
-    active_rooms[room_id] = {
-        "room_id": room_id,
-        "created_at": now,
-        "participants": [u1, u2],
-        "messages": []
-    }
-    user_room_map[u1] = room_id
-    user_room_map[u2] = room_id
-    log_rooms()
-    return room_id
-
-def close_room(room_id):
-    room = active_rooms.get(room_id)
-    if room:
-        for uid in room["participants"]:
-            user_room_map.pop(uid, None)
-        active_rooms.pop(room_id)
-        log_rooms()
-
-def find_partner(user_id, user_data_store, filters=None, premium=False):
-    candidates = []
-    for uid, profile in user_data_store.items():
-        if int(uid) == user_id: continue
-        if int(uid) in user_room_map: continue
-        check_premium_expiry(profile)
-        if profile.get("blocked"):
-            continue
-        if premium and not profile.get("is_premium"):
-            continue
-        if filters:
-            match = True
-            for k, v in filters.items():
-                if v and profile.get(k) != v:
-                    match = False
-                    break
-            if not match: continue
-        candidates.append(int(uid))
-    return candidates
-
-(
-    LANG_SELECT,
-    PROFILE_GENDER,
-    PROFILE_REGION,
-    PROFILE_COUNTRY,
-    PROFILE_NAME,
-    PARTNER_FILTER,
-    PREMIUM_PROOF
-) = range(7)
-
-# --- Handlers ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check_blocked(update: Update, context):
     user = update.effective_user
-    user_data_store = load_user_data()
-    uid = str(user.id)
-    profile = user_data_store.get(uid)
-    if profile and profile.get("name") and profile.get("gender") and profile.get("region") and profile.get("country"):
-        # Existing profile, search for partner
-        if profile.get("blocked"):
-            await safe_reply(update, context, "You are blocked from using this bot.")
-            return ConversationHandler.END
-        await safe_reply(update, context, "Welcome back! Searching for a partner for you...")
-        candidates = find_partner(user.id, user_data_store)
-        if candidates:
-            partner_id = candidates[0]
-            room_id = create_room(user.id, partner_id)
-            await context.bot.send_message(user.id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
-            await context.bot.send_message(partner_id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
-        else:
-            await safe_reply(update, context, "No partners available now. Try again later.")
-        return ConversationHandler.END
-    else:
-        # New user or incomplete profile
-        await safe_reply(update, context, "Let's set up your profile.")
-        # Ask for preferred name (show current Telegram name for reference)
-        tg_name = getattr(user, "full_name", None) or getattr(user, "first_name", None) or ""
-        await update.message.reply_text(
-            f"Your Telegram name is: {tg_name}\nPlease type the name you want to use in the bot:",
-            reply_markup=back_keyboard()
-        )
-        return PROFILE_NAME
+    dbuser = await db.users.find_one({"user_id": user.id})
+    if dbuser and dbuser.get("blocked"):
+        await update.message.reply_text("You are blocked. Please contact support for help.")
+        return True
+    return False
 
-async def input_profile_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    name = update.message.text.strip()
-    user_data_store = load_user_data()
-    update_profile(user.id, {"name": name}, user_data_store)
-    await update.message.reply_text(
-        "Choose your language:",
-        reply_markup=language_keyboard()
-    )
-    return LANG_SELECT
-
-async def select_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    lang_code = query.data.split("_")[1]
-    user = query.from_user
-    user_data_store = load_user_data()
-    update_profile(user.id, {"language": lang_code}, user_data_store)
-    await query.edit_message_text(
-        load_translation(lang_code).get("profile_gender", "Select your gender:"),
-        reply_markup=gender_keyboard()
-    )
-    return PROFILE_GENDER
-
-async def select_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    gender = query.data.split("_")[1]
-    user = query.from_user
-    user_data_store = load_user_data()
-    update_profile(user.id, {"gender": gender}, user_data_store)
-    await query.edit_message_text("Select your region:", reply_markup=region_keyboard())
-    return PROFILE_REGION
-
-async def select_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    region = query.data.split("_")[1]
-    user = query.from_user
-    user_data_store = load_user_data()
-    update_profile(user.id, {"region": region}, user_data_store)
-    await query.edit_message_text("Type your country name:", reply_markup=back_keyboard())
-    return PROFILE_COUNTRY
-
-async def input_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    country = update.message.text.strip()
-    user = update.effective_user
-    user_data_store = load_user_data()
-    update_profile(user.id, {"country": country}, user_data_store)
-    await update.message.reply_text(
-        tr(get_profile(user, user_data_store), "profile_complete"),
-        reply_markup=menu_keyboard(get_profile(user, user_data_store))
-    )
-    return ConversationHandler.END
-
-async def back_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user = query.from_user
-    user_data_store = load_user_data()
-    await query.edit_message_text(
-        tr(get_profile(user, user_data_store), "main_menu"),
-        reply_markup=menu_keyboard(get_profile(user, user_data_store))
-    )
-    return ConversationHandler.END
-
-# /profile command handler to allow profile update
-async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_data_store = load_user_data()
-    await update.message.reply_text(
-        "To update your profile, please type the name you want to use:",
-        reply_markup=back_keyboard()
-    )
-    return PROFILE_NAME
-
-async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user = query.from_user
-    user_data_store = load_user_data()
-    profile = get_profile(user, user_data_store)
-    if profile.get("blocked"):
-        await safe_reply(update, context, "You are blocked from using this bot.")
-        return ConversationHandler.END
-    if query.data == "profile":
-        await query.edit_message_text(
-            f"Profile:\n{format_user_info(profile)}Gender: {profile['gender']}\nRegion: {profile['region']}\nCountry: {profile['country']}\nPremium: {'Yes' if profile['is_premium'] else 'No'}",
-            reply_markup=menu_keyboard(profile)
-        )
-    elif query.data == "change_lang":
-        await query.edit_message_text("Choose your language:", reply_markup=language_keyboard())
-        return LANG_SELECT
-    elif query.data == "find_partner":
-        return await find_partner_start(update, context)
-    elif query.data == "premium":
-        await query.edit_message_text(
-            f"💸 To upgrade to premium:\n\n"
-            f"• Payeer: `{PAYEER_ACCOUNT}`\n"
-            f"• Bitcoin: `{BITCOIN_WALLET_ADDRESS}`\n\n"
-            f"Send your payment proof (photo/file) here.",
-            reply_markup=payment_keyboard()
-        )
-        return PREMIUM_PROOF
-    elif query.data == "filter_partner":
-        await query.edit_message_text("Type partner filter: gender,region,country", reply_markup=back_keyboard())
-        return PARTNER_FILTER
-    else:
-        await query.edit_message_text(tr(profile, "main_menu"), reply_markup=menu_keyboard(profile))
-    return ConversationHandler.END
-
-async def find_partner_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user if hasattr(update, "message") and update.message else update.callback_query.from_user
-    user_data_store = load_user_data()
-    profile = get_profile(user, user_data_store)
-    if profile.get("blocked"):
-        await safe_reply(update, context, "You are blocked from using this bot.")
-        return ConversationHandler.END
-    premium = profile.get("is_premium")
-    await safe_reply(update, context, tr(profile, "searching_partner"))
-    if premium:
-        return PARTNER_FILTER
-    else:
-        candidates = find_partner(user.id, user_data_store)
-        if candidates:
-            partner_id = candidates[0]
-            room_id = create_room(user.id, partner_id)
-            await context.bot.send_message(user.id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
-            await context.bot.send_message(partner_id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
-        else:
-            await safe_reply(update, context, tr(profile, "no_partner_found"))
-        return ConversationHandler.END
-
-async def partner_filter_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_data_store = load_user_data()
-    profile = get_profile(user, user_data_store)
-    if profile.get("blocked"):
-        await safe_reply(update, context, "You are blocked from using this bot.")
-        return ConversationHandler.END
-    filter_vals = update.message.text.split(",")
-    if len(filter_vals) < 3:
-        await safe_reply(update, context, tr(profile, "invalid_filter_format") if "invalid_filter_format" in load_translation(profile["language"]) else "Invalid format. Type: gender,region,country")
-        return PARTNER_FILTER
-    filters = {"gender": filter_vals[0].strip(), "region": filter_vals[1].strip(), "country": filter_vals[2].strip()}
-    candidates = find_partner(user.id, user_data_store, filters=filters, premium=True)
-    if candidates:
-        partner_id = candidates[0]
-        room_id = create_room(user.id, partner_id)
-        await context.bot.send_message(user.id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
-        await context.bot.send_message(partner_id, f"🔒 Connected to room #{room_id}. Chat anonymously!")
-    else:
-        await safe_reply(update, context, tr(profile, "no_partner_found"))
-    return ConversationHandler.END
-
-async def anonymous_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    user_data_store = load_user_data()
-    profile = get_profile(user, user_data_store)
-    if profile.get("blocked"):
-        await safe_reply(update, context, "You are blocked from using this bot.")
-        return
-    if user_id not in user_room_map:
-        return
-    room_id = user_room_map[user_id]
-    room = active_rooms.get(room_id)
-    partner_id = [uid for uid in room["participants"] if uid != user_id][0]
-    msg_obj = None
-    sender_prof = user_data_store.get(str(user_id), {})
-    receiver_prof = user_data_store.get(str(partner_id), {})
-    admin_msg = (
-        f"📢 Room #{room_id}\n"
-        f"From: {format_user_info(sender_prof)}\n"
-        f"To: {format_user_info(receiver_prof)}\n"
-    )
-    if update.message.text:
-        msg_obj = {"sender": user_id, "receiver": partner_id, "content": update.message.text, "time": datetime.now(timezone.utc).isoformat()}
-        await context.bot.send_message(partner_id, f"Anon: {update.message.text}")
-        await context.bot.send_message(TARGET_GROUP_ID, admin_msg + f"Message: \"{update.message.text}\"\nTime: {msg_obj['time']}")
-    elif update.message.photo:
-        file_id = update.message.photo[-1].file_id
-        msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[photo] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
-        await context.bot.send_photo(partner_id, file_id)
-        await context.bot.send_photo(TARGET_GROUP_ID, file_id, caption=admin_msg + f"Photo\nTime: {msg_obj['time']}")
-    elif update.message.document:
-        file_id = update.message.document.file_id
-        msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[document] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
-        await context.bot.send_document(partner_id, file_id)
-        await context.bot.send_document(TARGET_GROUP_ID, file_id, caption=admin_msg + f"Document\nTime: {msg_obj['time']}")
-    elif update.message.voice:
-        file_id = update.message.voice.file_id
-        msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[voice] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
-        await context.bot.send_voice(partner_id, file_id)
-        await context.bot.send_voice(TARGET_GROUP_ID, file_id, caption=admin_msg + f"Voice\nTime: {msg_obj['time']}")
-    elif update.message.video:
-        file_id = update.message.video.file_id
-        msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[video] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
-        await context.bot.send_video(partner_id, file_id)
-        await context.bot.send_video(TARGET_GROUP_ID, file_id, caption=admin_msg + f"Video\nTime: {msg_obj['time']}")
-    elif update.message.sticker:
-        file_id = update.message.sticker.file_id
-        msg_obj = {"sender": user_id, "receiver": partner_id, "content": f"[sticker] {file_id}", "time": datetime.now(timezone.utc).isoformat()}
-        await context.bot.send_sticker(partner_id, file_id)
-        await context.bot.send_sticker(TARGET_GROUP_ID, file_id)
-        await context.bot.send_message(TARGET_GROUP_ID, admin_msg + f"Sticker\nTime: {msg_obj['time']}")
-    if msg_obj:
-        room["messages"].append(msg_obj)
-        try:
-            with open(CHAT_LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(msg_obj) + "\n")
-        except Exception as e:
-            logger.error("Failed to write chat log: %s", e)
-        log_rooms()
-        log_room_message(room_id, msg_obj)
-
-async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    user_data_store = load_user_data()
-    profile = get_profile(user, user_data_store)
-    if profile.get("blocked"):
-        await safe_reply(update, context, "You are blocked from using this bot.")
-        return
-    if user_id not in user_room_map:
-        await safe_reply(update, context, "You are not in a room.")
-        return
-    room_id = user_room_map[user_id]
-    close_room(room_id)
-    await safe_reply(update, context, "You have left the room.")
-    return ConversationHandler.END
-
-async def premium_proof_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_data_store = load_user_data()
-    profile = get_profile(user, user_data_store)
-    if profile.get("blocked"):
-        await safe_reply(update, context, "You are blocked from using this bot.")
-        return ConversationHandler.END
-    proof = None
-    kind = None
-    if update.message.photo:
-        proof = update.message.photo[-1].file_id
-        kind = "photo"
-    elif update.message.document:
-        proof = update.message.document.file_id
-        kind = "document"
-    else:
-        await safe_reply(update, context, "Send a photo or document.")
-        return PREMIUM_PROOF
-    caption = f"Premium request from @{user.username or ''} (ID: {user.id})"
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Approve", callback_data=f"approve_{user.id}"), InlineKeyboardButton("Decline", callback_data=f"decline_{user.id}")]
-    ])
-    if kind == "photo":
-        await context.bot.send_photo(TARGET_GROUP_ID, proof, caption=caption, reply_markup=keyboard)
-    else:
-        await context.bot.send_document(TARGET_GROUP_ID, proof, caption=caption, reply_markup=keyboard)
-    await safe_reply(update, context, "Your proof was sent. Await admin approval.")
-    return ConversationHandler.END
-
-async def admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    user_id = int(data.split("_")[1])
-    user_data_store = load_user_data()
-    if data.startswith("approve_"):
-        expiry = (datetime.now(timezone.utc) + timedelta(days=90)).strftime("%Y-%m-%d")
-        update_profile(user_id, {"is_premium": True, "premium_expiry": expiry}, user_data_store)
-        await context.bot.send_message(user_id, "✅ Premium approved. You now have premium for 3 months.")
-        await query.edit_message_caption(caption="✅ Approved.")
-    elif data.startswith("decline_"):
-        await context.bot.send_message(user_id, "❌ Premium request declined.")
-        await query.edit_message_caption(caption="❌ Declined.")
-
-async def setpremium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
-        await safe_reply(update, context, "You are not authorized.")
-        return
-    if not context.args or len(context.args) < 1:
-        await safe_reply(update, context, "Usage: /setpremium <user_id>")
-        return
-    target_user_id = int(context.args[0])
-    expiry = (datetime.now(timezone.utc) + timedelta(days=90)).strftime("%Y-%m-%d")
-    user_data_store = load_user_data()
-    update_profile(target_user_id, {"is_premium": True, "premium_expiry": expiry}, user_data_store)
-    await context.bot.send_message(target_user_id, "✅ Premium approved by admin.")
-    await safe_reply(update, context, f"User {target_user_id} is now premium for 3 months.")
-
-async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
-        await safe_reply(update, context, "You are not authorized.")
-        return
-    if not context.args or len(context.args) < 1:
-        await safe_reply(update, context, "Usage: /userinfo <user_id>")
-        return
-    target_user_id = int(context.args[0])
-    user_data_store = load_user_data()
-    profile = user_data_store.get(str(target_user_id))
-    if not profile:
-        await safe_reply(update, context, "User not found.")
-        return
-    info = (
-        f"Name: {profile.get('name', '')}\n"
-        f"Username: @{profile.get('username', '')}\n"
-        f"Phone: {profile.get('phone_number', '')}\n"
-        f"User ID: {profile.get('user_id', '')}\n"
-        f"Gender: {profile.get('gender', '')}\n"
-        f"Region: {profile.get('region', '')}\n"
-        f"Country: {profile.get('country', '')}\n"
-        f"Premium: {'Yes' if profile.get('is_premium') else 'No'}\n"
-        f"Premium Expiry: {profile.get('premium_expiry', '')}\n"
-        f"Blocked: {'Yes' if profile.get('blocked') else 'No'}"
-    )
-    await context.bot.send_message(update.effective_user.id, info)
-    file_id = get_profile_picture(context, target_user_id)
-    if file_id:
-        await context.bot.send_photo(update.effective_user.id, file_id, caption="Profile Picture")
-
-async def roominfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
-        await safe_reply(update, context, "You are not authorized.")
-        return
-    if not context.args or len(context.args) < 1:
-        await safe_reply(update, context, "Usage: /roominfo <room_id>")
-        return
-    room_id = context.args[0]
-    user_data_store = load_user_data()
-    room = active_rooms.get(room_id)
-    history = get_room_history(room_id)
-    if not room or not history:
-        await safe_reply(update, context, "Room not found or no history.")
-        return
-    for msg in history:
-        sender_profile = user_data_store.get(str(msg["sender"]), {})
-        receiver_profile = user_data_store.get(str(msg["receiver"]), {})
-        info_msg = (
-            f"Room #{room_id}\n"
-            f"From: {format_user_info(sender_profile)}\n"
-            f"To: {format_user_info(receiver_profile)}\n"
-            f"Time: {msg['time']}\n"
-        )
-        content = msg["content"]
-        if content.startswith("[photo]"):
-            file_id = content.replace("[photo] ", "")
-            await context.bot.send_photo(update.effective_user.id, file_id, caption=info_msg)
-        elif content.startswith("[document]"):
-            file_id = content.replace("[document] ", "")
-            await context.bot.send_document(update.effective_user.id, file_id, caption=info_msg)
-        elif content.startswith("[voice]"):
-            file_id = content.replace("[voice] ", "")
-            await context.bot.send_voice(update.effective_user.id, file_id, caption=info_msg)
-        elif content.startswith("[video]"):
-            file_id = content.replace("[video] ", "")
-            await context.bot.send_video(update.effective_user.id, file_id, caption=info_msg)
-        elif content.startswith("[sticker]"):
-            file_id = content.replace("[sticker] ", "")
-            await context.bot.send_sticker(update.effective_user.id, file_id)
-            await context.bot.send_message(update.effective_user.id, info_msg)
-        else:
-            await context.bot.send_message(update.effective_user.id, info_msg + f"Message: {content}")
-
-async def block_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
-        await safe_reply(update, context, "You are not authorized.")
-        return
-    if not context.args or len(context.args) < 1:
-        await safe_reply(update, context, "Usage: /block <user_id>")
-        return
-    target_user_id = int(context.args[0])
-    user_data_store = load_user_data()
-    update_profile(target_user_id, {"blocked": True}, user_data_store)
-    await context.bot.send_message(target_user_id, "❌ You have been blocked from the bot.")
-    await safe_reply(update, context, f"Blocked user {target_user_id}.")
-
-async def unblock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
-        await safe_reply(update, context, "You are not authorized.")
-        return
-    if not context.args or len(context.args) < 1:
-        await safe_reply(update, context, "Usage: /unblock <user_id>")
-        return
-    target_user_id = int(context.args[0])
-    user_data_store = load_user_data()
-    update_profile(target_user_id, {"blocked": False}, user_data_store)
-    await context.bot.send_message(target_user_id, "✅ You have been unblocked and may use the bot again.")
-    await safe_reply(update, context, f"Unblocked user {target_user_id}.")
-
-async def message_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
-        await safe_reply(update, context, "You are not authorized.")
-        return
-    if len(context.args) < 2:
-        await safe_reply(update, context, "Usage: /message <user_id> <text>")
-        return
-    target_user_id = int(context.args[0])
-    text = " ".join(context.args[1:])
-    await context.bot.send_message(target_user_id, text)
-    await safe_reply(update, context, "Message sent.")
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error("Error: %s", context.error)
-    try:
-        await safe_reply(update, context, "An error occurred. Please try again.")
-    except Exception:
-        pass
+def is_admin(update: Update):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    return user_id == ADMIN_ID or chat_id == ADMIN_GROUP_ID
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
+    app.bot_data["ADMIN_GROUP_ID"] = ADMIN_GROUP_ID
 
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start), CommandHandler("profile", profile_command)],
+    # Admin commands
+    app.add_handler(CommandHandler("block", admin_block, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
+    app.add_handler(CommandHandler("unblock", admin_unblock, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
+    app.add_handler(CommandHandler("message", admin_message, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
+    app.add_handler(CommandHandler("stats", admin_stats, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
+    app.add_handler(CommandHandler("blockword", admin_blockword, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
+    app.add_handler(CommandHandler("unblockword", admin_unblockword, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
+    app.add_handler(CommandHandler("userinfo", admin_userinfo, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
+    app.add_handler(CommandHandler("roominfo", admin_roominfo, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
+    app.add_handler(CommandHandler("viewhistory", admin_viewhistory, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
+
+    # User commands
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("profile", start_profile))
+    app.add_handler(CommandHandler("upgrade", start_upgrade))
+    app.add_handler(CommandHandler("report", report_partner))
+
+    # Conversation for profile setup
+    profile_conv = ConversationHandler(
+        entry_points=[CommandHandler('profile', start_profile)],
         states={
-            PROFILE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_profile_name),
-                           CallbackQueryHandler(back_main_menu, pattern=r"^back$")],
-            LANG_SELECT: [CallbackQueryHandler(select_lang, pattern=r"^lang_")],
-            PROFILE_GENDER: [CallbackQueryHandler(select_gender, pattern=r"^gender_")],
-            PROFILE_REGION: [CallbackQueryHandler(select_region, pattern=r"^region_")],
-            PROFILE_COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_country),
-                              CallbackQueryHandler(back_main_menu, pattern=r"^back$")]
+            0: [CallbackQueryHandler(gender_cb)],
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, region_text)],
+            2: [MessageHandler(filters.TEXT & ~filters.COMMAND, country_text)],
+            3: [MessageHandler(filters.TEXT & ~filters.COMMAND, prefs_text)]
         },
-        fallbacks=[CallbackQueryHandler(back_main_menu, pattern=r"^back$")]
+        fallbacks=[]
     )
+    app.add_handler(profile_conv)
 
-    find_conv = ConversationHandler(
-        entry_points=[CommandHandler("find", find_partner_start)],
-        states={
-            PARTNER_FILTER: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, partner_filter_input),
-                CallbackQueryHandler(back_main_menu, pattern=r"^back$")
-            ]
-        },
-        fallbacks=[CallbackQueryHandler(back_main_menu, pattern=r"^back$")]
-    )
+    # Premium proof
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document, handle_proof))
+    app.add_handler(CallbackQueryHandler(admin_callback))
 
-    premium_conv = ConversationHandler(
-        entry_points=[CommandHandler("premium", lambda u,c: menu_callback(u,c))],
-        states={
-            PREMIUM_PROOF: [
-                MessageHandler(filters.PHOTO | filters.Document.ALL, premium_proof_handler),
-                CallbackQueryHandler(back_main_menu, pattern=r"^back$")
-            ]
-        },
-        fallbacks=[CallbackQueryHandler(back_main_menu, pattern=r"^back$")]
-    )
+    # Chat message handler (room logic must wire up context.user_data["room_id"])
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message))
 
-    app.add_handler(conv)
-    app.add_handler(find_conv)
-    app.add_handler(premium_conv)
-    app.add_handler(CommandHandler("stop", stop_chat))
-    app.add_handler(CommandHandler("setpremium", setpremium_command))
-    app.add_handler(CommandHandler("roominfo", roominfo_command))
-    app.add_handler(CommandHandler("userinfo", userinfo_command))
-    app.add_handler(CommandHandler("block", block_command))
-    app.add_handler(CommandHandler("unblock", unblock_command))
-    app.add_handler(CommandHandler("message", message_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, anonymous_chat))
-    app.add_handler(MessageHandler(filters.PHOTO, anonymous_chat))
-    app.add_handler(MessageHandler(filters.Document.ALL, anonymous_chat))
-    app.add_handler(MessageHandler(filters.VOICE, anonymous_chat))
-    app.add_handler(MessageHandler(filters.VIDEO, anonymous_chat))
-    app.add_handler(MessageHandler(filters.Sticker.ALL, anonymous_chat))
-    app.add_handler(CallbackQueryHandler(menu_callback, pattern="^(profile|change_lang|find_partner|premium|filter_partner)$"))
-    app.add_handler(CallbackQueryHandler(admin_approval, pattern=r"^(approve_|decline_)"))
-    app.add_error_handler(error_handler)
+    # Periodic premium expiry downgrade
+    async def expiry_job(context):
+        await downgrade_expired_premium()
+    app.job_queue.run_repeating(expiry_job, interval=3600, first=10)
 
-    logger.info("AnonindoChat Bot started.")
+    logger.info("AnonindoChat Bot started (polling).")
     app.run_polling()
 
 if __name__ == "__main__":
