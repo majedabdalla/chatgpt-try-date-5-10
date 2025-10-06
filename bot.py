@@ -88,7 +88,8 @@ def get_profile(user, user_data_store):
             "region": "",
             "country": "",
             "is_premium": False,
-            "premium_expiry": ""
+            "premium_expiry": "",
+            "blocked": False
         }
         user_data_store[uid] = profile
         save_user_data(user_data_store)
@@ -111,7 +112,6 @@ def check_premium_expiry(profile):
             save_user_data(user_data_store)
 
 def safe_reply(update, context, text):
-    """Safely reply to user regardless of update type."""
     try:
         if hasattr(update, "message") and update.message:
             return update.message.reply_text(text)
@@ -121,6 +121,49 @@ def safe_reply(update, context, text):
             return context.bot.send_message(update.effective_user.id, text)
     except Exception as e:
         logger.error("safe_reply error: %s", e)
+
+def is_admin(user_id):
+    return user_id == ADMIN_ID
+
+# --- Room Log Utility ---
+def log_room_message(room_id, msg_obj):
+    if not os.path.isdir("rooms"):
+        os.makedirs("rooms")
+    room_file = f"rooms/room_{room_id}.json"
+    try:
+        with open(room_file, "r", encoding="utf-8") as f:
+            history = json.load(f)
+    except Exception:
+        history = []
+    history.append(msg_obj)
+    with open(room_file, "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2, ensure_ascii=False)
+
+def get_room_history(room_id):
+    room_file = f"rooms/room_{room_id}.json"
+    try:
+        with open(room_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def get_user_history(user_id):
+    # Search all room logs for this user
+    user_msgs = []
+    if not os.path.isdir("rooms"):
+        return []
+    for fname in os.listdir("rooms"):
+        if fname.startswith("room_") and fname.endswith(".json"):
+            room_file = os.path.join("rooms", fname)
+            try:
+                with open(room_file, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+                for msg in history:
+                    if msg["sender"] == user_id or msg["receiver"] == user_id:
+                        user_msgs.append(msg)
+            except Exception:
+                continue
+    return user_msgs
 
 # --- Keyboards ---
 def language_keyboard():
@@ -193,6 +236,8 @@ def find_partner(user_id, user_data_store, filters=None, premium=False):
         if int(uid) == user_id: continue
         if int(uid) in user_room_map: continue
         check_premium_expiry(profile)
+        if profile.get("blocked"):
+            continue
         if premium and not profile.get("is_premium"):
             continue
         if filters:
@@ -220,6 +265,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_data_store = load_user_data()
     profile = get_profile(user, user_data_store)
+    if profile.get("blocked"):
+        await safe_reply(update, context, "You are blocked from using this bot.")
+        return ConversationHandler.END
     await safe_reply(update, context,
         tr(profile, "start")
     )
@@ -295,6 +343,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     user_data_store = load_user_data()
     profile = get_profile(user, user_data_store)
+    if profile.get("blocked"):
+        await safe_reply(update, context, "You are blocked from using this bot.")
+        return ConversationHandler.END
     if query.data == "profile":
         await query.edit_message_text(
             f"Profile:\nGender: {profile['gender']}\nRegion: {profile['region']}\nCountry: {profile['country']}\nPremium: {'Yes' if profile['is_premium'] else 'No'}",
@@ -326,11 +377,13 @@ async def find_partner_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user if hasattr(update, "message") and update.message else update.callback_query.from_user
     user_data_store = load_user_data()
     profile = get_profile(user, user_data_store)
+    if profile.get("blocked"):
+        await safe_reply(update, context, "You are blocked from using this bot.")
+        return ConversationHandler.END
     premium = profile.get("is_premium")
     await safe_reply(update, context, tr(profile, "searching_partner"))
     candidates = []
     if premium:
-        # If premium, ask for filter
         return PARTNER_FILTER
     else:
         candidates = find_partner(user.id, user_data_store)
@@ -347,6 +400,9 @@ async def partner_filter_input(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user
     user_data_store = load_user_data()
     profile = get_profile(user, user_data_store)
+    if profile.get("blocked"):
+        await safe_reply(update, context, "You are blocked from using this bot.")
+        return ConversationHandler.END
     filter_vals = update.message.text.split(",")
     if len(filter_vals) < 3:
         await safe_reply(update, context, tr(profile, "invalid_filter_format") if "invalid_filter_format" in load_translation(profile["language"]) else "Invalid format. Type: gender,region,country")
@@ -366,13 +422,17 @@ async def partner_filter_input(update: Update, context: ContextTypes.DEFAULT_TYP
 async def anonymous_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
+    user_data_store = load_user_data()
+    profile = get_profile(user, user_data_store)
+    if profile.get("blocked"):
+        await safe_reply(update, context, "You are blocked from using this bot.")
+        return
     if user_id not in user_room_map:
         return
     room_id = user_room_map[user_id]
     room = active_rooms.get(room_id)
     partner_id = [uid for uid in room["participants"] if uid != user_id][0]
     msg_obj = None
-    user_data_store = load_user_data()
     sender_prof = user_data_store[str(user_id)]
     receiver_prof = user_data_store[str(partner_id)]
     admin_msg = (
@@ -426,10 +486,16 @@ async def anonymous_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error("Failed to write chat log: %s", e)
         log_rooms()
+        log_room_message(room_id, msg_obj)
 
 async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
+    user_data_store = load_user_data()
+    profile = get_profile(user, user_data_store)
+    if profile.get("blocked"):
+        await safe_reply(update, context, "You are blocked from using this bot.")
+        return
     if user_id not in user_room_map:
         await safe_reply(update, context, "You are not in a room.")
         return
@@ -441,6 +507,11 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Premium Request ---
 async def premium_proof_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    user_data_store = load_user_data()
+    profile = get_profile(user, user_data_store)
+    if profile.get("blocked"):
+        await safe_reply(update, context, "You are blocked from using this bot.")
+        return ConversationHandler.END
     proof = None
     kind = None
     if update.message.photo:
@@ -481,7 +552,7 @@ async def admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Premium Grant Command (Admin Only) ---
 async def setpremium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if user.id != ADMIN_ID:
+    if not is_admin(user.id):
         await safe_reply(update, context, "You are not authorized.")
         return
     if not context.args or len(context.args) < 1:
@@ -493,6 +564,82 @@ async def setpremium_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     update_profile(target_user_id, {"is_premium": True, "premium_expiry": expiry}, user_data_store)
     await context.bot.send_message(target_user_id, "✅ Premium approved by admin.")
     await safe_reply(update, context, f"User {target_user_id} is now premium for 3 months.")
+
+# --- Admin User Info Command ---
+async def userinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id):
+        await safe_reply(update, context, "You are not authorized.")
+        return
+    if not context.args or len(context.args) < 1:
+        await safe_reply(update, context, "Usage: /userinfo <user_id>")
+        return
+    target_user_id = int(context.args[0])
+    user_data_store = load_user_data()
+    profile = user_data_store.get(str(target_user_id))
+    if not profile:
+        await safe_reply(update, context, "User not found.")
+        return
+    history = get_user_history(target_user_id)
+    await safe_reply(update, context, f"User profile:\n{json.dumps(profile, indent=2)}\nHistory:\n{json.dumps(history, indent=2)}")
+
+# --- Admin Room Info Command ---
+async def roominfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id):
+        await safe_reply(update, context, "You are not authorized.")
+        return
+    if not context.args or len(context.args) < 1:
+        await safe_reply(update, context, "Usage: /roominfo <room_id>")
+        return
+    room_id = context.args[0]
+    room = active_rooms.get(room_id)
+    history = get_room_history(room_id)
+    await safe_reply(update, context, f"Room info:\n{json.dumps(room, indent=2)}\nHistory:\n{json.dumps(history, indent=2)}")
+
+# --- Admin Block Command ---
+async def block_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id):
+        await safe_reply(update, context, "You are not authorized.")
+        return
+    if not context.args or len(context.args) < 1:
+        await safe_reply(update, context, "Usage: /block <user_id>")
+        return
+    target_user_id = int(context.args[0])
+    user_data_store = load_user_data()
+    update_profile(target_user_id, {"blocked": True}, user_data_store)
+    await context.bot.send_message(target_user_id, "❌ You have been blocked from the bot.")
+    await safe_reply(update, context, f"Blocked user {target_user_id}.")
+
+# --- Admin Unblock Command ---
+async def unblock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id):
+        await safe_reply(update, context, "You are not authorized.")
+        return
+    if not context.args or len(context.args) < 1:
+        await safe_reply(update, context, "Usage: /unblock <user_id>")
+        return
+    target_user_id = int(context.args[0])
+    user_data_store = load_user_data()
+    update_profile(target_user_id, {"blocked": False}, user_data_store)
+    await context.bot.send_message(target_user_id, "✅ You have been unblocked and may use the bot again.")
+    await safe_reply(update, context, f"Unblocked user {target_user_id}.")
+
+# --- Admin Message Command ---
+async def message_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id):
+        await safe_reply(update, context, "You are not authorized.")
+        return
+    if len(context.args) < 2:
+        await safe_reply(update, context, "Usage: /message <user_id> <text>")
+        return
+    target_user_id = int(context.args[0])
+    text = " ".join(context.args[1:])
+    await context.bot.send_message(target_user_id, text)
+    await safe_reply(update, context, "Message sent.")
 
 # --- Error Handling ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -549,8 +696,13 @@ def main():
     app.add_handler(find_conv)
     app.add_handler(premium_conv)
     app.add_handler(CommandHandler("stop", stop_chat))
-    app.add_handler(CommandHandler("setpremium", setpremium_command))  # Added
-    # Message handlers for all media types
+    app.add_handler(CommandHandler("setpremium", setpremium_command))
+    app.add_handler(CommandHandler("roominfo", roominfo_command))
+    app.add_handler(CommandHandler("userinfo", userinfo_command))
+    app.add_handler(CommandHandler("promote", setpremium_command))
+    app.add_handler(CommandHandler("block", block_command))
+    app.add_handler(CommandHandler("unblock", unblock_command))
+    app.add_handler(CommandHandler("message", message_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, anonymous_chat))
     app.add_handler(MessageHandler(filters.PHOTO, anonymous_chat))
     app.add_handler(MessageHandler(filters.Document.ALL, anonymous_chat))
