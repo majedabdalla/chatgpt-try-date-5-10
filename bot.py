@@ -556,7 +556,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, anonymous_chat))
     app.add_handler(MessageHandler(filters.VOICE, anonymous_chat))
     app.add_handler(MessageHandler(filters.VIDEO, anonymous_chat))
-    app.add_handler(MessageHandler(filters.STICKER, anonymous_chat))
+    app.add_handler(MessageHandler(filters.Sticker.ALL, anonymous_chat))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^(profile|change_lang|find_partner|premium|filter_partner)$"))
     app.add_handler(CallbackQueryHandler(admin_approval, pattern=r"^(approve_|decline_)"))
     app.add_error_handler(error_handler)
