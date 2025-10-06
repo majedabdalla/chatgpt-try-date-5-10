@@ -75,7 +75,7 @@ def main():
     app.add_handler(profile_conv)
 
     # Premium proof
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document, handle_proof))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof))
     app.add_handler(CallbackQueryHandler(admin_callback))
 
     # Chat message handler (room logic must wire up context.user_data["room_id"])
