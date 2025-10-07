@@ -107,9 +107,10 @@ def main():
     # Premium proof (must be after conversation handler)
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof))
 
-    # --- Add always-forward handler BEFORE process_message! ---
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_to_admin), group=0)
-    # Chat message handler (room logic must wire up context.user_data["room_id"])
+    # Register the universal forward-to-admin handler for ALL non-command messages:
+    app.add_handler(MessageHandler(~filters.COMMAND, forward_to_admin), group=0)  # <--- ALL message types except commands
+
+    # Chat message handler (for actual in-room chat)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message), group=1)
 
     # Register error handler
