@@ -9,7 +9,7 @@ user_rate_limit = {}
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
-    room_id = context.user_data.get("room_id")
+    room_id = context.bot_data.get("user_room_map", {}).get(user_id)
     blocked_words = await get_blocked_words()
     for word in blocked_words:
         if word.lower() in text.lower():
