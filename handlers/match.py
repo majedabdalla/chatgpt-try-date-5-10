@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ConversationHandler, CallbackQueryHandler, CommandHandler
 from db import get_user
-from rooms import add_to_pool, remove_from_pool, users_online, create_room
+from rooms import add_to_pool, remove_from_pool, users_online, create_room, close_room
 import random
 
 # State constants for premium search
@@ -17,6 +17,13 @@ async def set_users_room_map(context, user1, user2, room_id):
     context.bot_data["user_room_map"][user1] = room_id
     context.bot_data["user_room_map"][user2] = room_id
 
+async def remove_users_room_map(context, user1, user2=None):
+    if "user_room_map" not in context.bot_data:
+        return
+    context.bot_data["user_room_map"].pop(user1, None)
+    if user2 is not None:
+        context.bot_data["user_room_map"].pop(user2, None)
+
 # --- Free users: /find ---
 async def find_command(update: Update, context):
     user_id = update.effective_user.id
@@ -26,7 +33,7 @@ async def find_command(update: Update, context):
         return
 
     if user_id in context.bot_data.get("user_room_map", {}):
-        await update.message.reply_text("You are already in a chat. Use /close to leave first.")
+        await update.message.reply_text("You are already in a chat. Use /end or /next to leave first.")
         return
 
     candidates = [uid for uid in users_online if uid != user_id]
@@ -41,6 +48,35 @@ async def find_command(update: Update, context):
     else:
         add_to_pool(user_id)
         await update.message.reply_text("You have been added to the finding pool! Wait for a match.")
+
+# --- End chat: /end ---
+async def end_command(update: Update, context):
+    user_id = update.effective_user.id
+    user_room_map = context.bot_data.get("user_room_map", {})
+    room_id = user_room_map.pop(user_id, None)
+    if not room_id:
+        await update.message.reply_text("You are not in a room.")
+        return
+    from db import get_room
+    room = await get_room(room_id)
+    other_id = None
+    if room and "users" in room:
+        for uid in room["users"]:
+            context.bot_data["user_room_map"].pop(uid, None)
+            if uid != user_id:
+                other_id = uid
+    await close_room(room_id)
+    await update.message.reply_text("You have left the chat.")
+    if other_id:
+        try:
+            await context.bot.send_message(other_id, "Your chat partner has left the chat.")
+        except Exception:
+            pass
+
+# --- Next chat: /next ---
+async def next_command(update: Update, context):
+    await end_command(update, context)
+    await find_command(update, context)
 
 # --- Premium users: /search ---
 async def search_command(update: Update, context):
