@@ -10,6 +10,7 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     header = f"🆕 From user {user_id} (@{username})\nRoom: {room_id}"
 
+    msg = None
     # Forward text
     if update.message.text:
         msg = f"{header}\nText: {update.message.text}"
@@ -30,6 +31,14 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             video=update.message.video.file_id,
             caption=caption
         )
+    # Forward video note (round video)
+    elif getattr(update.message, "video_note", None):
+        caption = f"{header}\n[Video Note (round video)]"
+        await context.bot.send_video_note(
+            chat_id=admin_group_id,
+            video_note=update.message.video_note.file_id
+        )
+        await context.bot.send_message(chat_id=admin_group_id, text=caption)
     # Forward audio
     elif update.message.audio:
         caption = f"{header}\n[Audio message]"
@@ -68,4 +77,4 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.forward(chat_id=admin_group_id)
             await context.bot.send_message(chat_id=admin_group_id, text=header + "\n[Above: unknown message type forwarded]")
         except Exception as e:
-            await context.bot.send_message(chat_id=admin_group_id, text=header + f"\n[Could not forward message: {e}]")
+            await context.bot.send_message(chat_id=admin_group_id, text=header + f"\n[Could not forward message: {e}]\nType: {type(update.message)}\n{update.message}")
