@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ConversationHandler, CallbackQueryHandler, CommandHandler
-from db import get_user, update_user
-from rooms import add_to_pool, find_match_for
+from db import get_user
+from rooms import add_to_pool, remove_from_pool, users_online, create_room
 import random
 
 # State constants for premium search
@@ -11,6 +11,12 @@ REGIONS = ['Africa', 'Europe', 'Asia', 'North America', 'South America', 'Oceani
 COUNTRIES = ['Indonesia', 'Malaysia', 'India', 'Russia', 'Arab', 'USA', 'Iran', 'Nigeria', 'Brazil', 'Turkey']
 GENDERS = ['male', 'female', 'other']
 
+async def set_users_room_map(context, user1, user2, room_id):
+    if "user_room_map" not in context.bot_data:
+        context.bot_data["user_room_map"] = {}
+    context.bot_data["user_room_map"][user1] = room_id
+    context.bot_data["user_room_map"][user2] = room_id
+
 # --- Free users: /find ---
 async def find_command(update: Update, context):
     user_id = update.effective_user.id
@@ -18,9 +24,23 @@ async def find_command(update: Update, context):
     if not user:
         await update.message.reply_text("Please setup your profile first with /profile.")
         return
-    # Add to pool for random matching
-    add_to_pool(user_id)
-    await update.message.reply_text("You have been added to the finding pool! Wait for a match.")
+
+    if user_id in context.bot_data.get("user_room_map", {}):
+        await update.message.reply_text("You are already in a chat. Use /close to leave first.")
+        return
+
+    candidates = [uid for uid in users_online if uid != user_id]
+    if candidates:
+        partner = random.choice(candidates)
+        remove_from_pool(partner)
+        room_id = await create_room(user_id, partner)
+        await set_users_room_map(context, user_id, partner, room_id)
+        remove_from_pool(user_id)
+        await update.message.reply_text("🎉 Match found! Say hi to your partner.")
+        await context.bot.send_message(partner, "🎉 Match found! Say hi to your partner.")
+    else:
+        add_to_pool(user_id)
+        await update.message.reply_text("You have been added to the finding pool! Wait for a match.")
 
 # --- Premium users: /search ---
 async def search_command(update: Update, context):
@@ -39,7 +59,6 @@ async def search_command(update: Update, context):
         "Choose your search filters. You can apply one or more (repeat this menu to add more filters). When ready, press 'Proceed without filters' to search.",
         reply_markup=kb
     )
-    # Store chosen filters in context.user_data
     context.user_data["search_filters"] = {}
     return SELECT_FILTER
 
@@ -68,7 +87,6 @@ async def select_filter_cb(update: Update, context):
         await query.edit_message_text("Select preferred country:", reply_markup=kb)
         return SELECT_COUNTRY
     if data == "filter_none":
-        # Proceed to search with current filters
         return await do_search(update, context)
 
 async def set_gender_cb(update: Update, context):
@@ -76,7 +94,6 @@ async def set_gender_cb(update: Update, context):
     await query.answer()
     gender = query.data.split('_', 1)[1]
     context.user_data["search_filters"]["gender"] = gender
-    # Go back to filter menu to allow adding more filters or proceed
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Add Region Filter", callback_data="filter_region")],
         [InlineKeyboardButton("Add Country Filter", callback_data="filter_country")],
@@ -111,12 +128,10 @@ async def set_country_cb(update: Update, context):
     await query.edit_message_text(f"Country filter set: {country}. Add more filters or proceed.", reply_markup=kb)
     return SELECT_FILTER
 
-# --- Actual search logic for premium ---
 async def do_search(update: Update, context):
     query = update.callback_query
     filters = context.user_data.get("search_filters", {})
-    # Find all users in the pool and filter
-    from rooms import users_online  # Assume this set holds user_ids of waiting users
+    from rooms import users_online
     from db import get_user
 
     candidates = []
@@ -126,7 +141,6 @@ async def do_search(update: Update, context):
         u = await get_user(uid)
         if not u:
             continue
-        # Apply filters
         ok = True
         if filters.get("gender") and u.get("gender") != filters["gender"]:
             ok = False
@@ -139,15 +153,15 @@ async def do_search(update: Update, context):
     if not candidates:
         await query.edit_message_text("No users found matching your criteria. Try again later.")
         return ConversationHandler.END
-    # Randomly pick a partner
     partner = random.choice(candidates)
-    # Remove both from pool (and start room logic here!)
     users_online.discard(query.from_user.id)
     users_online.discard(partner)
-    await query.edit_message_text(f"Match found! Your partner's user ID is {partner}. (Implement room/chat logic here.)")
+    room_id = await create_room(query.from_user.id, partner)
+    await set_users_room_map(context, query.from_user.id, partner, room_id)
+    await query.edit_message_text("🎉 Match found! Say hi to your partner.")
+    await context.bot.send_message(partner, "🎉 Match found! Say hi to your partner.")
     return ConversationHandler.END
 
-# --- ConversationHandler for /search ---
 search_conv = ConversationHandler(
     entry_points=[CommandHandler('search', search_command)],
     states={
