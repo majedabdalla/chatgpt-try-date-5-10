@@ -3,7 +3,7 @@ import logging
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, BaseHandler
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
 from db import db
 from handlers.profile import (
@@ -49,31 +49,25 @@ def is_admin(update: Update):
 async def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
 
-# --- ADMIN FLAG HANDLER START ---
-class AdminFlagHandler(BaseHandler):
-    def check_update(self, update):
-        # Always run, on every update
-        return True
-
-    async def handle_update(self, update, application, check_result, context):
-        ADMIN_ID = application.bot_data.get("ADMIN_ID")
-        ADMIN_GROUP_ID = application.bot_data.get("ADMIN_GROUP_ID")
-        user_id = update.effective_user.id if update.effective_user else None
-        chat_id = update.effective_chat.id if update.effective_chat else None
-        # Set admin flag for user or group
-        if user_id == ADMIN_ID or chat_id == ADMIN_GROUP_ID:
-            context.user_data["is_admin"] = True
-        else:
-            context.user_data["is_admin"] = False
-# --- ADMIN FLAG HANDLER END ---
+# --- ADMIN FLAG HANDLER FUNCTION ---
+async def set_admin_flag(update: Update, context):
+    ADMIN_ID = context.application.bot_data.get("ADMIN_ID")
+    ADMIN_GROUP_ID = context.application.bot_data.get("ADMIN_GROUP_ID")
+    user_id = update.effective_user.id if update.effective_user else None
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    if user_id == ADMIN_ID or chat_id == ADMIN_GROUP_ID:
+        context.user_data["is_admin"] = True
+    else:
+        context.user_data["is_admin"] = False
+# --- END ADMIN FLAG HANDLER FUNCTION ---
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data["ADMIN_GROUP_ID"] = ADMIN_GROUP_ID
-    app.bot_data["ADMIN_ID"] = ADMIN_ID  # <-- Needed for AdminFlagHandler
+    app.bot_data["ADMIN_ID"] = ADMIN_ID  # For set_admin_flag
 
     # --- REGISTER ADMIN FLAG HANDLER FIRST! ---
-    app.add_handler(AdminFlagHandler(), group=-1)
+    app.add_handler(MessageHandler(filters.ALL, set_admin_flag), group=-1)
 
     # Conversation for profile setup (MUST be first after admin flag!)
     profile_conv = ConversationHandler(
