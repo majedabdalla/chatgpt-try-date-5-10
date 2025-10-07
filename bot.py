@@ -6,7 +6,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
 from db import db
-from handlers.profile import start_profile, gender_cb, region_text, country_text, prefs_text
+from handlers.profile import start_profile, gender_cb, region_text, country_text, prefs_text, ASK_GENDER, ASK_REGION, ASK_COUNTRY, ASK_PREFS
 from handlers.premium import start_upgrade, handle_proof, admin_callback
 from handlers.chat import process_message
 from handlers.report import report_partner
@@ -60,6 +60,7 @@ def main():
     app.add_handler(CommandHandler("profile", start_profile))
     app.add_handler(CommandHandler("upgrade", start_upgrade))
     app.add_handler(CommandHandler("report", report_partner))
+    
 
     # Conversation for profile setup
     profile_conv = ConversationHandler(
