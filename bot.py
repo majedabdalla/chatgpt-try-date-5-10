@@ -17,7 +17,7 @@ from handlers.admincmds import (
     admin_block, admin_unblock, admin_message, admin_stats, admin_blockword, admin_unblockword,
     admin_userinfo, admin_roominfo, admin_viewhistory
 )
-from handlers.match import find_command, search_conv
+from handlers.match import find_command, search_conv, end_command, next_command
 from handlers.forward import forward_to_admin  # <-- Only import, DO NOT define again!
 from admin import downgrade_expired_premium
 from handlers.message_router import route_message
@@ -101,7 +101,9 @@ def main():
     app.add_handler(CommandHandler("profile", start_profile))
     app.add_handler(CommandHandler("upgrade", start_upgrade))
     app.add_handler(CommandHandler("report", report_partner))
-    app.add_handler(CommandHandler("find", find_command))  # <-- Add /find here
+    app.add_handler(CommandHandler("find", find_command))
+    app.add_handler(CommandHandler("end", end_command))
+    app.add_handler(CommandHandler("next", next_command))
 
     # Admin approve/decline callback (should come AFTER profile_conv!)
     app.add_handler(CallbackQueryHandler(admin_callback))
