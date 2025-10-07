@@ -40,6 +40,10 @@ def is_admin(update: Update):
     chat_id = update.effective_chat.id
     return user_id == ADMIN_ID or chat_id == ADMIN_GROUP_ID
 
+# Error handler for debugging
+async def error_handler(update, context):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data["ADMIN_GROUP_ID"] = ADMIN_GROUP_ID
@@ -60,27 +64,31 @@ def main():
     app.add_handler(CommandHandler("profile", start_profile))
     app.add_handler(CommandHandler("upgrade", start_upgrade))
     app.add_handler(CommandHandler("report", report_partner))
-    
 
-    # Conversation for profile setup
+    # Conversation for profile setup (MUST use named constants)
     profile_conv = ConversationHandler(
         entry_points=[CommandHandler('profile', start_profile)],
         states={
-            0: [CallbackQueryHandler(gender_cb)],
-            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, region_text)],
-            2: [MessageHandler(filters.TEXT & ~filters.COMMAND, country_text)],
-            3: [MessageHandler(filters.TEXT & ~filters.COMMAND, prefs_text)]
+            ASK_GENDER: [CallbackQueryHandler(gender_cb)],
+            ASK_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, region_text)],
+            ASK_COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, country_text)],
+            ASK_PREFS: [MessageHandler(filters.TEXT & ~filters.COMMAND, prefs_text)]
         },
         fallbacks=[]
     )
     app.add_handler(profile_conv)
 
-    # Premium proof
+    # Premium proof (must be after conversation handler)
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof))
+
+    # Admin approve/decline callback (should not interfere with profile conversation)
     app.add_handler(CallbackQueryHandler(admin_callback))
 
     # Chat message handler (room logic must wire up context.user_data["room_id"])
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message))
+
+    # Register error handler
+    app.add_error_handler(error_handler)
 
     # Periodic premium expiry downgrade
     async def expiry_job(context):
