@@ -18,6 +18,7 @@ from handlers.admincmds import (
     admin_userinfo, admin_roominfo, admin_viewhistory
 )
 from handlers.match import find_command, search_conv
+from handlers.forward import forward_to_admin
 from admin import downgrade_expired_premium
 
 load_dotenv()
