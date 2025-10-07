@@ -48,6 +48,19 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data["ADMIN_GROUP_ID"] = ADMIN_GROUP_ID
 
+    # Conversation for profile setup (MUST be first!)
+    profile_conv = ConversationHandler(
+        entry_points=[CommandHandler('profile', start_profile)],
+        states={
+            ASK_GENDER: [CallbackQueryHandler(gender_cb)],
+            ASK_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, region_text)],
+            ASK_COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, country_text)],
+            ASK_PREFS: [MessageHandler(filters.TEXT & ~filters.COMMAND, prefs_text)]
+        },
+        fallbacks=[]
+    )
+    app.add_handler(profile_conv)  # <-- This must be first!
+
     # Admin commands
     app.add_handler(CommandHandler("block", admin_block, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
     app.add_handler(CommandHandler("unblock", admin_unblock, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
@@ -65,24 +78,11 @@ def main():
     app.add_handler(CommandHandler("upgrade", start_upgrade))
     app.add_handler(CommandHandler("report", report_partner))
 
-    # Conversation for profile setup (MUST use named constants)
-    profile_conv = ConversationHandler(
-        entry_points=[CommandHandler('profile', start_profile)],
-        states={
-            ASK_GENDER: [CallbackQueryHandler(gender_cb)],
-            ASK_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, region_text)],
-            ASK_COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, country_text)],
-            ASK_PREFS: [MessageHandler(filters.TEXT & ~filters.COMMAND, prefs_text)]
-        },
-        fallbacks=[]
-    )
-    app.add_handler(profile_conv)
+    # Admin approve/decline callback (should come AFTER profile_conv!)
+    app.add_handler(CallbackQueryHandler(admin_callback))
 
     # Premium proof (must be after conversation handler)
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof))
-
-    # Admin approve/decline callback (should not interfere with profile conversation)
-    app.add_handler(CallbackQueryHandler(admin_callback))
 
     # Chat message handler (room logic must wire up context.user_data["room_id"])
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message))
