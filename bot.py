@@ -6,7 +6,10 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
 from db import db
-from handlers.profile import start_profile, gender_cb, region_text, country_text, prefs_text, ASK_GENDER, ASK_REGION, ASK_COUNTRY, ASK_PREFS
+from handlers.profile import (
+    start_profile, profile_menu, gender_cb, region_cb, country_cb, 
+    ASK_GENDER, ASK_REGION, ASK_COUNTRY, PROFILE_MENU
+)
 from handlers.premium import start_upgrade, handle_proof, admin_callback
 from handlers.chat import process_message
 from handlers.report import report_partner
@@ -14,6 +17,7 @@ from handlers.admincmds import (
     admin_block, admin_unblock, admin_message, admin_stats, admin_blockword, admin_unblockword,
     admin_userinfo, admin_roominfo, admin_viewhistory
 )
+from handlers.match import find_command, search_conv
 from admin import downgrade_expired_premium
 
 load_dotenv()
@@ -52,14 +56,17 @@ def main():
     profile_conv = ConversationHandler(
         entry_points=[CommandHandler('profile', start_profile)],
         states={
-            ASK_GENDER: [CallbackQueryHandler(gender_cb)],
-            ASK_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, region_text)],
-            ASK_COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, country_text)],
-            ASK_PREFS: [MessageHandler(filters.TEXT & ~filters.COMMAND, prefs_text)]
+            PROFILE_MENU: [CallbackQueryHandler(profile_menu, pattern="^edit_profile$")],
+            ASK_GENDER: [CallbackQueryHandler(gender_cb, pattern="^gender_")],
+            ASK_REGION: [CallbackQueryHandler(region_cb, pattern="^region_")],
+            ASK_COUNTRY: [CallbackQueryHandler(country_cb, pattern="^country_")]
         },
         fallbacks=[]
     )
     app.add_handler(profile_conv)  # <-- This must be first!
+
+    # Add premium search conversation
+    app.add_handler(search_conv)
 
     # Admin commands
     app.add_handler(CommandHandler("block", admin_block, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
@@ -77,6 +84,7 @@ def main():
     app.add_handler(CommandHandler("profile", start_profile))
     app.add_handler(CommandHandler("upgrade", start_upgrade))
     app.add_handler(CommandHandler("report", report_partner))
+    app.add_handler(CommandHandler("find", find_command))  # <-- Add /find here
 
     # Admin approve/decline callback (should come AFTER profile_conv!)
     app.add_handler(CallbackQueryHandler(admin_callback))
