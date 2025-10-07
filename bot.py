@@ -18,7 +18,7 @@ from handlers.admincmds import (
     admin_userinfo, admin_roominfo, admin_viewhistory
 )
 from handlers.match import find_command, search_conv
-from handlers.forward import forward_to_admin
+from handlers.forward import forward_to_admin  # <-- Only import, DO NOT define again!
 from admin import downgrade_expired_premium
 
 load_dotenv()
@@ -44,20 +44,6 @@ def is_admin(update: Update):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     return user_id == ADMIN_ID or chat_id == ADMIN_GROUP_ID
-
-# --- NEW: Always-on message forwarding handler ---
-async def forward_to_admin(update: Update, context):
-    user = update.effective_user
-    user_id = user.id
-    username = user.username or "none"
-    # Try to get room_id from room map (set by /find or /search match)
-    room_id = context.bot_data.get("user_room_map", {}).get(user_id, 0)
-    text = update.message.text if update.message else ""
-    msg = f"🆕 Message from user {user_id} (@{username})\nRoom: {room_id}\nText: {text}"
-    try:
-        await context.bot.send_message(chat_id=ADMIN_GROUP_ID, text=msg)
-    except Exception as e:
-        logger.error(f"Failed to forward to admin group: {e}")
 
 # Error handler for debugging
 async def error_handler(update, context):
