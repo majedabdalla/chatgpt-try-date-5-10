@@ -1,6 +1,6 @@
 from telegram import Update
 from admin import block_user, unblock_user, send_admin_message, get_stats, add_blocked_word, remove_blocked_word
-from db import get_user, get_room, get_chat_history
+from db import get_user, get_user_by_username, get_room, get_chat_history
 
 def _is_admin(update, context):
     ADMIN_ID = context.bot_data.get("ADMIN_ID")
@@ -32,7 +32,10 @@ async def admin_message(update: Update, context):
         return
     user_id_or_username = context.args[0]
     text = " ".join(context.args[1:])
+    # Try user_id, then username (with or without @)
     success = await send_admin_message(context.bot, user_id_or_username, text)
+    if not success and user_id_or_username.startswith("@"):
+        success = await send_admin_message(context.bot, user_id_or_username[1:], text)
     if success:
         await update.message.reply_text("Message sent.")
     else:
@@ -67,6 +70,10 @@ async def admin_userinfo(update: Update, context):
         return
     identifier = context.args[0]
     user = await get_user(identifier)
+    if not user and identifier.startswith("@"):
+        user = await get_user_by_username(identifier[1:])
+    if not user:
+        user = await get_user_by_username(identifier)
     if user:
         await update.message.reply_text(str(user))
     else:
