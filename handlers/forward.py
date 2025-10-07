@@ -8,7 +8,6 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     room_id = context.bot_data.get("user_room_map", {}).get(user_id, 0)
     admin_group_id = context.bot_data.get("ADMIN_GROUP_ID")
 
-    # Compose a common header
     header = f"🆕 From user {user_id} (@{username})\nRoom: {room_id}"
 
     # Forward text
