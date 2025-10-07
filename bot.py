@@ -3,7 +3,7 @@ import logging
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, BaseHandler
 )
 from db import db
 from handlers.profile import (
@@ -49,11 +49,33 @@ def is_admin(update: Update):
 async def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
 
+# --- ADMIN FLAG HANDLER START ---
+class AdminFlagHandler(BaseHandler):
+    def check_update(self, update):
+        # Always run, on every update
+        return True
+
+    async def handle_update(self, update, application, check_result, context):
+        ADMIN_ID = application.bot_data.get("ADMIN_ID")
+        ADMIN_GROUP_ID = application.bot_data.get("ADMIN_GROUP_ID")
+        user_id = update.effective_user.id if update.effective_user else None
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        # Set admin flag for user or group
+        if user_id == ADMIN_ID or chat_id == ADMIN_GROUP_ID:
+            context.user_data["is_admin"] = True
+        else:
+            context.user_data["is_admin"] = False
+# --- ADMIN FLAG HANDLER END ---
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data["ADMIN_GROUP_ID"] = ADMIN_GROUP_ID
+    app.bot_data["ADMIN_ID"] = ADMIN_ID  # <-- Needed for AdminFlagHandler
 
-    # Conversation for profile setup (MUST be first!)
+    # --- REGISTER ADMIN FLAG HANDLER FIRST! ---
+    app.add_handler(AdminFlagHandler(), group=-1)
+
+    # Conversation for profile setup (MUST be first after admin flag!)
     profile_conv = ConversationHandler(
         entry_points=[CommandHandler('profile', start_profile)],
         states={
@@ -64,7 +86,7 @@ def main():
         },
         fallbacks=[]
     )
-    app.add_handler(profile_conv)  # <-- This must be first!
+    app.add_handler(profile_conv)  # <-- This must be first after admin flag!
 
     # Add premium search conversation
     app.add_handler(search_conv)
