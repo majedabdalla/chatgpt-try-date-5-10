@@ -20,7 +20,7 @@ from handlers.admincmds import (
 from handlers.match import find_command, search_conv
 from handlers.forward import forward_to_admin  # <-- Only import, DO NOT define again!
 from admin import downgrade_expired_premium
-
+from handlers.message_router import route_message
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -109,12 +109,7 @@ def main():
     # Premium proof (must be after conversation handler)
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof))
 
-    # Register the universal forward-to-admin handler for ALL non-command messages:
-    app.add_handler(MessageHandler(~filters.COMMAND, forward_to_admin), group=0)  # <--- ALL message types except commands
-
-    # Chat message handler (for actual in-room chat)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message), group=1)
-
+    app.add_handler(MessageHandler(~filters.COMMAND, route_message))
     # Register error handler
     app.add_error_handler(error_handler)
 
