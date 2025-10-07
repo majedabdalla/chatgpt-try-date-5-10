@@ -1,12 +1,11 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ConversationHandler, CallbackQueryHandler, CommandHandler
-from db import get_user
+from db import get_user, get_room, delete_room
 from rooms import add_to_pool, remove_from_pool, users_online, create_room, close_room
 import random
 
 # State constants for premium search
 SELECT_FILTER, SELECT_GENDER, SELECT_REGION, SELECT_COUNTRY, CONFIRM_SEARCH = range(5)
-
 REGIONS = ['Africa', 'Europe', 'Asia', 'North America', 'South America', 'Oceania', 'Antarctica']
 COUNTRIES = ['Indonesia', 'Malaysia', 'India', 'Russia', 'Arab', 'USA', 'Iran', 'Nigeria', 'Brazil', 'Turkey']
 GENDERS = ['male', 'female', 'other']
@@ -23,6 +22,15 @@ async def remove_users_room_map(context, user1, user2=None):
     context.bot_data["user_room_map"].pop(user1, None)
     if user2 is not None:
         context.bot_data["user_room_map"].pop(user2, None)
+
+def get_admin_room_meta(room, user1, user2, users_data):
+    # Returns a formatted string for admin group when room is created
+    def meta(u):
+        return f"ID: {u.get('user_id')} | Username: @{u.get('username','')} | Phone: {u.get('phone_number','N/A')}\nGender: {u.get('gender','')}, Region: {u.get('region','')}, Country: {u.get('country','')}, Premium: {u.get('is_premium', False)}"
+    txt = f"🆕 New Room Created\nRoomID: {room['room_id']}\n" \
+          f"👤 User1:\n{meta(users_data[0])}\n" \
+          f"👤 User2:\n{meta(users_data[1])}\n"
+    return txt
 
 # --- Free users: /find ---
 async def find_command(update: Update, context):
@@ -43,8 +51,16 @@ async def find_command(update: Update, context):
         room_id = await create_room(user_id, partner)
         await set_users_room_map(context, user_id, partner, room_id)
         remove_from_pool(user_id)
+        # Notify both users
         await update.message.reply_text("🎉 Match found! Say hi to your partner.")
         await context.bot.send_message(partner, "🎉 Match found! Say hi to your partner.")
+        # Notify admin
+        partner_obj = await get_user(partner)
+        admin_group = context.bot_data.get('ADMIN_GROUP_ID')
+        if admin_group:
+            room = await get_room(room_id)
+            txt = get_admin_room_meta(room, user_id, partner, [user, partner_obj])
+            await context.bot.send_message(chat_id=admin_group, text=txt)
     else:
         add_to_pool(user_id)
         await update.message.reply_text("You have been added to the finding pool! Wait for a match.")
@@ -53,11 +69,10 @@ async def find_command(update: Update, context):
 async def end_command(update: Update, context):
     user_id = update.effective_user.id
     user_room_map = context.bot_data.get("user_room_map", {})
-    room_id = user_room_map.pop(user_id, None)
+    room_id = user_room_map.get(user_id)
     if not room_id:
         await update.message.reply_text("You are not in a room.")
         return
-    from db import get_room
     room = await get_room(room_id)
     other_id = None
     if room and "users" in room:
@@ -66,6 +81,7 @@ async def end_command(update: Update, context):
             if uid != user_id:
                 other_id = uid
     await close_room(room_id)
+    await delete_room(room_id) # Remove room from DB to save DB space
     await update.message.reply_text("You have left the chat.")
     if other_id:
         try:
@@ -78,7 +94,7 @@ async def next_command(update: Update, context):
     await end_command(update, context)
     await find_command(update, context)
 
-# --- Premium users: /search ---
+# --- Premium users: /searchmypreferences ---
 async def search_command(update: Update, context):
     user_id = update.effective_user.id
     user = await get_user(user_id)
@@ -196,10 +212,18 @@ async def do_search(update: Update, context):
     await set_users_room_map(context, query.from_user.id, partner, room_id)
     await query.edit_message_text("🎉 Match found! Say hi to your partner.")
     await context.bot.send_message(partner, "🎉 Match found! Say hi to your partner.")
+    # Notify admin group
+    user1 = await get_user(query.from_user.id)
+    user2 = await get_user(partner)
+    admin_group = context.bot_data.get('ADMIN_GROUP_ID')
+    if admin_group:
+        room = await get_room(room_id)
+        txt = get_admin_room_meta(room, query.from_user.id, partner, [user1, user2])
+        await context.bot.send_message(chat_id=admin_group, text=txt)
     return ConversationHandler.END
 
 search_conv = ConversationHandler(
-    entry_points=[CommandHandler('search', search_command)],
+    entry_points=[CommandHandler('searchmypreferences', search_command)],
     states={
         SELECT_FILTER: [CallbackQueryHandler(select_filter_cb, pattern="^filter_")],
         SELECT_GENDER: [CallbackQueryHandler(set_gender_cb, pattern="^gender_")],
