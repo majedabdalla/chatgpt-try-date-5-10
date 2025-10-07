@@ -22,7 +22,7 @@ async def admin_callback(update: Update, context):
     query = update.callback_query
     await query.answer()
     if ':' not in query.data:
-    return  # Ignore unrelated callbacks
+        return  # Ignore unrelated callbacks
     action, uid = query.data.split(':', 1)
     uid = int(uid)
     if action == 'approve':
