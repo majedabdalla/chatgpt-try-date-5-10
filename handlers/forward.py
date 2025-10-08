@@ -1,5 +1,6 @@
 from telegram import Update
 from telegram.ext import ContextTypes
+from db import get_room, get_user
 
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -8,12 +9,23 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     room_id = context.bot_data.get("user_room_map", {}).get(user_id, 0)
     admin_group_id = context.bot_data.get("ADMIN_GROUP_ID")
 
-    header = f"🆕 From user {user_id} (@{username})\nRoom: {room_id}"
+    # Get receiver info
+    room = await get_room(room_id)
+    receiver_id = None
+    if room and "users" in room:
+        receiver_id = [uid for uid in room["users"] if uid != user_id]
+        receiver_id = receiver_id[0] if receiver_id else None
+    receiver = await get_user(receiver_id) if receiver_id else None
+
+    header = f"📢 Room #{room_id}\n👤 Sender: {user_id} (username: @{username}, phone: {getattr(user, 'phone_number', 'N/A')})"
+    if receiver:
+        header += f"\n👥 Receiver: {receiver['user_id']} (username: @{receiver.get('username','')}, phone: {receiver.get('phone_number','N/A')})"
+    header += f"\nRoom Created: {room['created_at'] if room else 'N/A'}\n"
 
     msg = None
     # Forward text
     if update.message.text:
-        msg = f"{header}\nText: {update.message.text}"
+        msg = f"{header}\n💬 Message: {update.message.text}"
         await context.bot.send_message(chat_id=admin_group_id, text=msg)
     # Forward photo
     elif update.message.photo:
@@ -72,7 +84,6 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await context.bot.send_message(chat_id=admin_group_id, text=header + "\n[Sticker sent above]")
     else:
-        # fallback: forward as copy if possible
         try:
             await update.message.forward(chat_id=admin_group_id)
             await context.bot.send_message(chat_id=admin_group_id, text=header + "\n[Above: unknown message type forwarded]")
