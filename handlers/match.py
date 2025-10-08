@@ -17,7 +17,7 @@ def get_filter_menu():
         [InlineKeyboardButton("Filter by Country", callback_data="filter_country")],
         [InlineKeyboardButton("Filter by Language", callback_data="filter_language")],
         [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")],
-        [InlineKeyboardButton("Back", callback_data="back")]
+        [InlineKeyboardButton("Back", callback_data="menu_back")]
     ])
 
 async def open_filter_menu(update: Update, context):
@@ -126,31 +126,31 @@ async def select_filter_cb(update: Update, context):
             [InlineKeyboardButton("Male", callback_data="gender_male"),
              InlineKeyboardButton("Female", callback_data="gender_female"),
              InlineKeyboardButton("Other", callback_data="gender_other")],
-            [InlineKeyboardButton("Back", callback_data="back")]
+            [InlineKeyboardButton("Back", callback_data="menu_back")]
         ])
         await query.edit_message_text("Select preferred gender:", reply_markup=kb)
         return SELECT_GENDER
     if data == "filter_region":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(region, callback_data=f"region_{region}")] for region in REGIONS
-        ] + [[InlineKeyboardButton("Back", callback_data="back")]])
+        ] + [[InlineKeyboardButton("Back", callback_data="menu_back")]])
         await query.edit_message_text("Select preferred region:", reply_markup=kb)
         return SELECT_REGION
     if data == "filter_country":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(country, callback_data=f"country_{country}")] for country in COUNTRIES
-        ] + [[InlineKeyboardButton("Back", callback_data="back")]])
+        ] + [[InlineKeyboardButton("Back", callback_data="menu_back")]])
         await query.edit_message_text("Select preferred country:", reply_markup=kb)
         return SELECT_COUNTRY
     if data == "filter_language":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(lang.upper(), callback_data=f"language_{lang}")] for lang in LANGUAGES
-        ] + [[InlineKeyboardButton("Back", callback_data="back")]])
+        ] + [[InlineKeyboardButton("Back", callback_data="menu_back")]])
         await query.edit_message_text("Select preferred language:", reply_markup=kb)
         return SELECT_LANGUAGE
     if data == "filter_none":
         return await do_search(update, context)
-    if data == "back":
+    if data == "menu_back":
         await query.edit_message_text("Choose your search filters:", reply_markup=get_filter_menu())
         return SELECT_FILTER
     if data.startswith("gender_"):
@@ -218,14 +218,35 @@ async def do_search(update: Update, context):
                 await context.bot.send_photo(chat_id=admin_group, photo=pid)
     return ConversationHandler.END
 
+# Main menu callback handler for inline menu actions
+async def menu_callback_handler(update, context):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == "menu_edit_profile":
+        from handlers.profile import start_profile
+        await start_profile(update, context)
+    elif data == "menu_find":
+        await find_command(update, context)
+    elif data == "menu_upgrade":
+        from handlers.premium import start_upgrade
+        await start_upgrade(update, context)
+    elif data == "menu_filter":
+        await open_filter_menu(update, context)
+    elif data == "menu_back":
+        from bot import main_menu
+        await main_menu(update, context)
+    else:
+        await query.edit_message_text("Unknown menu option.")
+
 search_conv = ConversationHandler(
     entry_points=[CommandHandler('searchmypreferences', open_filter_menu)],
     states={
-        SELECT_FILTER: [CallbackQueryHandler(select_filter_cb, pattern="^filter_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
-        SELECT_GENDER: [CallbackQueryHandler(select_filter_cb, pattern="^gender_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
-        SELECT_REGION: [CallbackQueryHandler(select_filter_cb, pattern="^region_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
-        SELECT_COUNTRY: [CallbackQueryHandler(select_filter_cb, pattern="^country_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
-        SELECT_LANGUAGE: [CallbackQueryHandler(select_filter_cb, pattern="^language_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")]
+        SELECT_FILTER: [CallbackQueryHandler(select_filter_cb, pattern="^filter_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")],
+        SELECT_GENDER: [CallbackQueryHandler(select_filter_cb, pattern="^gender_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")],
+        SELECT_REGION: [CallbackQueryHandler(select_filter_cb, pattern="^region_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")],
+        SELECT_COUNTRY: [CallbackQueryHandler(select_filter_cb, pattern="^country_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")],
+        SELECT_LANGUAGE: [CallbackQueryHandler(select_filter_cb, pattern="^language_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")]
     },
     fallbacks=[]
 )
