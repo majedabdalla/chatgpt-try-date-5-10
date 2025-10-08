@@ -50,12 +50,11 @@ async def show_profile_menu(update: Update, context):
         [InlineKeyboardButton("Edit", callback_data="edit_profile")],
         [InlineKeyboardButton("Back", callback_data="menu_back")]
     ])
-    await update.effective_message.reply_text(txt, reply_markup=kb)
+    await update.effective_message.edit_text(txt, reply_markup=kb)
 
 async def profile_menu(update: Update, context):
     query = update.callback_query
     await query.answer()
-    user = await get_user(query.from_user.id)
     if query.data == "edit_profile":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton('Male', callback_data='gender_male'), InlineKeyboardButton('Female', callback_data='gender_female')],
