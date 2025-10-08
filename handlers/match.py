@@ -4,11 +4,11 @@ from db import get_user, get_room, delete_room
 from rooms import add_to_pool, remove_from_pool, users_online, create_room, close_room
 import random
 
-# State constants for premium search
-SELECT_FILTER, SELECT_GENDER, SELECT_REGION, SELECT_COUNTRY, CONFIRM_SEARCH = range(5)
+SELECT_FILTER, SELECT_GENDER, SELECT_REGION, SELECT_COUNTRY, SELECT_LANGUAGE, CONFIRM_SEARCH = range(6)
 REGIONS = ['Africa', 'Europe', 'Asia', 'North America', 'South America', 'Oceania', 'Antarctica']
 COUNTRIES = ['Indonesia', 'Malaysia', 'India', 'Russia', 'Arab', 'USA', 'Iran', 'Nigeria', 'Brazil', 'Turkey']
 GENDERS = ['male', 'female', 'other']
+LANGUAGES = ['en', 'ar', 'hi', 'id']
 
 async def set_users_room_map(context, user1, user2, room_id):
     if "user_room_map" not in context.bot_data:
@@ -24,15 +24,16 @@ async def remove_users_room_map(context, user1, user2=None):
         context.bot_data["user_room_map"].pop(user2, None)
 
 def get_admin_room_meta(room, user1, user2, users_data):
-    # Returns a formatted string for admin group when room is created
     def meta(u):
-        return f"ID: {u.get('user_id')} | Username: @{u.get('username','')} | Phone: {u.get('phone_number','N/A')}\nGender: {u.get('gender','')}, Region: {u.get('region','')}, Country: {u.get('country','')}, Premium: {u.get('is_premium', False)}"
+        return (
+            f"ID: {u.get('user_id')} | Username: @{u.get('username','')} | Phone: {u.get('phone_number','N/A')}\n"
+            f"Language: {u.get('language','en')}, Gender: {u.get('gender','')}, Region: {u.get('region','')}, Country: {u.get('country','')}, Premium: {u.get('is_premium', False)}"
+        )
     txt = f"🆕 New Room Created\nRoomID: {room['room_id']}\n" \
           f"👤 User1:\n{meta(users_data[0])}\n" \
           f"👤 User2:\n{meta(users_data[1])}\n"
     return txt
 
-# --- Free users: /find ---
 async def find_command(update: Update, context):
     user_id = update.effective_user.id
     user = await get_user(user_id)
@@ -51,21 +52,22 @@ async def find_command(update: Update, context):
         room_id = await create_room(user_id, partner)
         await set_users_room_map(context, user_id, partner, room_id)
         remove_from_pool(user_id)
-        # Notify both users
         await update.message.reply_text("🎉 Match found! Say hi to your partner.")
         await context.bot.send_message(partner, "🎉 Match found! Say hi to your partner.")
-        # Notify admin
         partner_obj = await get_user(partner)
         admin_group = context.bot_data.get('ADMIN_GROUP_ID')
         if admin_group:
             room = await get_room(room_id)
             txt = get_admin_room_meta(room, user_id, partner, [user, partner_obj])
             await context.bot.send_message(chat_id=admin_group, text=txt)
+            # Send profile photos
+            for u in [user, partner_obj]:
+                for pid in u.get('profile_photos', []):
+                    await context.bot.send_photo(chat_id=admin_group, photo=pid)
     else:
         add_to_pool(user_id)
         await update.message.reply_text("You have been added to the finding pool! Wait for a match.")
 
-# --- End chat: /end ---
 async def end_command(update: Update, context):
     user_id = update.effective_user.id
     user_room_map = context.bot_data.get("user_room_map", {})
@@ -81,7 +83,7 @@ async def end_command(update: Update, context):
             if uid != user_id:
                 other_id = uid
     await close_room(room_id)
-    await delete_room(room_id) # Remove room from DB to save DB space
+    await delete_room(room_id)
     await update.message.reply_text("You have left the chat.")
     if other_id:
         try:
@@ -89,12 +91,10 @@ async def end_command(update: Update, context):
         except Exception:
             pass
 
-# --- Next chat: /next ---
 async def next_command(update: Update, context):
     await end_command(update, context)
     await find_command(update, context)
 
-# --- Premium users: /searchmypreferences ---
 async def search_command(update: Update, context):
     user_id = update.effective_user.id
     user = await get_user(user_id)
@@ -105,6 +105,7 @@ async def search_command(update: Update, context):
         [InlineKeyboardButton("Filter by Gender", callback_data="filter_gender")],
         [InlineKeyboardButton("Filter by Region", callback_data="filter_region")],
         [InlineKeyboardButton("Filter by Country", callback_data="filter_country")],
+        [InlineKeyboardButton("Filter by Language", callback_data="filter_language")],
         [InlineKeyboardButton("Proceed without filters", callback_data="filter_none")]
     ])
     await update.message.reply_text(
@@ -138,6 +139,12 @@ async def select_filter_cb(update: Update, context):
         ])
         await query.edit_message_text("Select preferred country:", reply_markup=kb)
         return SELECT_COUNTRY
+    if data == "filter_language":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(lang.upper(), callback_data=f"language_{lang}")] for lang in LANGUAGES
+        ])
+        await query.edit_message_text("Select preferred language:", reply_markup=kb)
+        return SELECT_LANGUAGE
     if data == "filter_none":
         return await do_search(update, context)
 
@@ -149,6 +156,7 @@ async def set_gender_cb(update: Update, context):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Add Region Filter", callback_data="filter_region")],
         [InlineKeyboardButton("Add Country Filter", callback_data="filter_country")],
+        [InlineKeyboardButton("Add Language Filter", callback_data="filter_language")],
         [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")]
     ])
     await query.edit_message_text(f"Gender filter set: {gender}. Add more filters or proceed.", reply_markup=kb)
@@ -162,6 +170,7 @@ async def set_region_cb(update: Update, context):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Add Gender Filter", callback_data="filter_gender")],
         [InlineKeyboardButton("Add Country Filter", callback_data="filter_country")],
+        [InlineKeyboardButton("Add Language Filter", callback_data="filter_language")],
         [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")]
     ])
     await query.edit_message_text(f"Region filter set: {region}. Add more filters or proceed.", reply_markup=kb)
@@ -175,17 +184,30 @@ async def set_country_cb(update: Update, context):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Add Gender Filter", callback_data="filter_gender")],
         [InlineKeyboardButton("Add Region Filter", callback_data="filter_region")],
+        [InlineKeyboardButton("Add Language Filter", callback_data="filter_language")],
         [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")]
     ])
     await query.edit_message_text(f"Country filter set: {country}. Add more filters or proceed.", reply_markup=kb)
     return SELECT_FILTER
 
+async def set_language_cb(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    language = query.data.split('_', 1)[1]
+    context.user_data["search_filters"]["language"] = language
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Add Gender Filter", callback_data="filter_gender")],
+        [InlineKeyboardButton("Add Region Filter", callback_data="filter_region")],
+        [InlineKeyboardButton("Add Country Filter", callback_data="filter_country")],
+        [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")]
+    ])
+    await query.edit_message_text(f"Language filter set: {language}. Add more filters or proceed.", reply_markup=kb)
+    return SELECT_FILTER
+
 async def do_search(update: Update, context):
     query = update.callback_query
     filters = context.user_data.get("search_filters", {})
-    from rooms import users_online
     from db import get_user
-
     candidates = []
     for uid in users_online:
         if uid == query.from_user.id:
@@ -200,6 +222,8 @@ async def do_search(update: Update, context):
             ok = False
         if filters.get("country") and u.get("country") != filters["country"]:
             ok = False
+        if filters.get("language") and u.get("language") != filters["language"]:
+            ok = False
         if ok:
             candidates.append(uid)
     if not candidates:
@@ -212,7 +236,6 @@ async def do_search(update: Update, context):
     await set_users_room_map(context, query.from_user.id, partner, room_id)
     await query.edit_message_text("🎉 Match found! Say hi to your partner.")
     await context.bot.send_message(partner, "🎉 Match found! Say hi to your partner.")
-    # Notify admin group
     user1 = await get_user(query.from_user.id)
     user2 = await get_user(partner)
     admin_group = context.bot_data.get('ADMIN_GROUP_ID')
@@ -220,6 +243,9 @@ async def do_search(update: Update, context):
         room = await get_room(room_id)
         txt = get_admin_room_meta(room, query.from_user.id, partner, [user1, user2])
         await context.bot.send_message(chat_id=admin_group, text=txt)
+        for u in [user1, user2]:
+            for pid in u.get('profile_photos', []):
+                await context.bot.send_photo(chat_id=admin_group, photo=pid)
     return ConversationHandler.END
 
 search_conv = ConversationHandler(
@@ -228,7 +254,8 @@ search_conv = ConversationHandler(
         SELECT_FILTER: [CallbackQueryHandler(select_filter_cb, pattern="^filter_")],
         SELECT_GENDER: [CallbackQueryHandler(set_gender_cb, pattern="^gender_")],
         SELECT_REGION: [CallbackQueryHandler(set_region_cb, pattern="^region_")],
-        SELECT_COUNTRY: [CallbackQueryHandler(set_country_cb, pattern="^country_")]
+        SELECT_COUNTRY: [CallbackQueryHandler(set_country_cb, pattern="^country_")],
+        SELECT_LANGUAGE: [CallbackQueryHandler(set_language_cb, pattern="^language_")]
     },
     fallbacks=[]
 )
