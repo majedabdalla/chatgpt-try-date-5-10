@@ -18,7 +18,10 @@ from handlers.admincmds import (
     admin_block, admin_unblock, admin_message, admin_stats, admin_blockword, admin_unblockword,
     admin_userinfo, admin_roominfo, admin_viewhistory, admin_setpremium
 )
-from handlers.match import find_command, search_conv, end_command, next_command, open_filter_menu, menu_callback_handler, select_filter_cb
+from handlers.match import (
+    find_command, search_conv, end_command, next_command, open_filter_menu,
+    menu_callback_handler, select_filter_cb
+)
 from handlers.forward import forward_to_admin
 from admin import downgrade_expired_premium
 from handlers.message_router import route_message
@@ -129,7 +132,7 @@ def main():
     # Inline menu callback handler for ALL menu actions
     app.add_handler(CallbackQueryHandler(language_select_callback, pattern="^lang_"))
     app.add_handler(CallbackQueryHandler(menu_callback_handler_entry, pattern="^menu_"))
-    app.add_handler(CallbackQueryHandler(select_filter_cb, pattern="^(filter_|gender_|region_|country_|language_|back)$"))
+    app.add_handler(CallbackQueryHandler(select_filter_cb, pattern="^(filter_|gender_|region_|country_|language_|menu_back)$"))
 
     # Profile setup conversation
     profile_conv = ConversationHandler(
