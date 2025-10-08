@@ -20,7 +20,7 @@ from handlers.admincmds import (
 )
 from handlers.match import (
     find_command, search_conv, end_command, next_command, open_filter_menu,
-    menu_callback_handler, select_filter_cb
+    menu_callback_handler, select_filter_cb, get_main_menu_markup
 )
 from handlers.forward import forward_to_admin
 from admin import downgrade_expired_premium
@@ -49,6 +49,16 @@ def load_locale(lang):
             return json.load(f)
     except Exception:
         return {}
+
+def get_main_menu_markup(lang="en"):
+    locale = load_locale(lang)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Profile", callback_data="menu_profile")],
+        [InlineKeyboardButton("Find", callback_data="menu_find")],
+        [InlineKeyboardButton("Upgrade", callback_data="menu_upgrade")],
+        [InlineKeyboardButton("Filters", callback_data="menu_filter")],
+        [InlineKeyboardButton("Back", callback_data="menu_back")]
+    ])
 
 async def reply_translated(update, context, key, **kwargs):
     user = update.effective_user
@@ -79,13 +89,7 @@ async def language_select_callback(update: Update, context):
     await update_user(query.from_user.id, {"language": lang})
     locale = load_locale(lang)
     user = await get_user(query.from_user.id)
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Profile", callback_data="menu_profile")],
-        [InlineKeyboardButton("Find", callback_data="menu_find")],
-        [InlineKeyboardButton("Upgrade", callback_data="menu_upgrade")],
-        [InlineKeyboardButton("Filters", callback_data="menu_filter")],
-        [InlineKeyboardButton("Back", callback_data="menu_back")]
-    ])
+    kb = get_main_menu_markup(lang)
     await query.edit_message_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
     if not user:
         await start_profile(update, context)
@@ -98,14 +102,12 @@ async def main_menu(update: Update, context):
     user = await get_user(update.effective_user.id)
     lang = user.get("language", "en") if user else "en"
     locale = load_locale(lang)
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Profile", callback_data="menu_profile")],
-        [InlineKeyboardButton("Find", callback_data="menu_find")],
-        [InlineKeyboardButton("Upgrade", callback_data="menu_upgrade")],
-        [InlineKeyboardButton("Filters", callback_data="menu_filter")],
-        [InlineKeyboardButton("Back", callback_data="menu_back")]
-    ])
-    await update.effective_message.reply_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
+    kb = get_main_menu_markup(lang)
+    # Try to edit last menu if possible, else send new
+    try:
+        await update.effective_message.edit_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
+    except Exception:
+        await update.effective_message.reply_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
 
 async def menu_callback_handler_entry(update: Update, context):
     await menu_callback_handler(update, context)
