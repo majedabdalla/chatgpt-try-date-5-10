@@ -27,7 +27,7 @@ async def open_filter_menu(update: Update, context):
         await update.message.reply_text("This feature is for premium users only.")
         return ConversationHandler.END
     await update.message.reply_text(
-        "Choose your search filters:",
+        "Select your filters:",
         reply_markup=get_filter_menu()
     )
     context.user_data["search_filters"] = {}
@@ -70,6 +70,7 @@ async def find_command(update: Update, context):
 
     candidates = [uid for uid in users_online if uid != user_id]
     if candidates:
+        await update.message.reply_text("Searching for a partner...")
         partner = random.choice(candidates)
         remove_from_pool(partner)
         room_id = await create_room(user_id, partner)
@@ -87,6 +88,7 @@ async def find_command(update: Update, context):
                 for pid in u.get('profile_photos', []):
                     await context.bot.send_photo(chat_id=admin_group, photo=pid)
     else:
+        await update.message.reply_text("Searching for a partner...")
         add_to_pool(user_id)
         await update.message.reply_text("You have been added to the finding pool! Wait for a match.")
 
@@ -151,7 +153,7 @@ async def select_filter_cb(update: Update, context):
     if data == "filter_none":
         return await do_search(update, context)
     if data == "menu_back":
-        await query.edit_message_text("Choose your search filters:", reply_markup=get_filter_menu())
+        await query.edit_message_text("Select your filters:", reply_markup=get_filter_menu())
         return SELECT_FILTER
     if data.startswith("gender_"):
         gender = data.split('_', 1)[1]
@@ -223,15 +225,18 @@ async def menu_callback_handler(update, context):
     query = update.callback_query
     await query.answer()
     data = query.data
-    if data == "menu_edit_profile":
-        from handlers.profile import start_profile
-        await start_profile(update, context)
+    if data == "menu_profile":
+        from handlers.profile import show_profile_menu
+        await show_profile_menu(update, context)
     elif data == "menu_find":
+        await query.edit_message_text("Searching for a partner...")
         await find_command(update, context)
     elif data == "menu_upgrade":
+        await query.edit_message_text("Please upload payment proof (photo, screenshot, or document)")
         from handlers.premium import start_upgrade
         await start_upgrade(update, context)
     elif data == "menu_filter":
+        await query.edit_message_text("Select your filters:")
         await open_filter_menu(update, context)
     elif data == "menu_back":
         from bot import main_menu
