@@ -11,12 +11,12 @@ from handlers.profile import (
     start_profile, profile_menu, gender_cb, region_cb, country_cb, 
     ASK_GENDER, ASK_REGION, ASK_COUNTRY, PROFILE_MENU, show_profile_menu
 )
-from handlers.premium import start_upgrade, handle_proof, admin_callback
+from handlers.premium import start_upgrade, handle_proof, admin_callback, premium_proof_state
 from handlers.chat import process_message
 from handlers.report import report_partner
 from handlers.admincmds import (
     admin_block, admin_unblock, admin_message, admin_stats, admin_blockword, admin_unblockword,
-    admin_userinfo, admin_roominfo, admin_viewhistory, admin_setpremium
+    admin_userinfo, admin_roominfo, admin_viewhistory, admin_setpremium, admin_resetpremium
 )
 from handlers.match import (
     find_command, search_conv, end_command, next_command, open_filter_menu,
@@ -103,7 +103,6 @@ async def main_menu(update: Update, context):
     lang = user.get("language", "en") if user else "en"
     locale = load_locale(lang)
     kb = get_main_menu_markup(lang)
-    # Try to edit last menu if possible, else send new
     try:
         await update.effective_message.edit_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
     except Exception:
@@ -112,10 +111,18 @@ async def main_menu(update: Update, context):
 async def menu_callback_handler_entry(update: Update, context):
     await menu_callback_handler(update, context)
 
+def premium_proof_guard(update, context):
+    # Only accept photo/doc as proof if last pressed "Upgrade"
+    user_id = update.effective_user.id
+    if premium_proof_state.get(user_id, False):
+        return True
+    return False
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data["ADMIN_GROUP_ID"] = ADMIN_GROUP_ID
     app.bot_data["ADMIN_ID"] = ADMIN_ID
+    app.bot_data["main_menu"] = main_menu
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("profile", start_profile))
@@ -154,9 +161,11 @@ def main():
     app.add_handler(CommandHandler("roominfo", admin_roominfo, admin_filter))
     app.add_handler(CommandHandler("viewhistory", admin_viewhistory, admin_filter))
     app.add_handler(CommandHandler("setpremium", admin_setpremium, admin_filter))
+    app.add_handler(CommandHandler("resetpremium", admin_resetpremium, admin_filter))
 
     app.add_handler(CallbackQueryHandler(admin_callback))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof))
+    # Accept payment proof only after Upgrade button is pressed
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof, filter=premium_proof_guard))
     app.add_handler(MessageHandler(~filters.COMMAND, route_message))
     app.add_error_handler(lambda update, context: logger.error(msg="Exception while handling an update:", exc_info=context.error))
 
