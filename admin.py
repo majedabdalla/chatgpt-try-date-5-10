@@ -7,6 +7,9 @@ async def approve_premium(user_id, duration_days=90):
     await update_user(user_id, {"is_premium": True, "premium_expiry": expiry})
     return expiry
 
+async def reset_premium(user_id):
+    await update_user(user_id, {"is_premium": False, "premium_expiry": None})
+
 async def downgrade_expired_premium():
     now = datetime.utcnow().isoformat()
     async for user in db.users.find({"is_premium": True, "premium_expiry": {"$lt": now}}):
