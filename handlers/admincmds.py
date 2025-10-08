@@ -5,15 +5,15 @@ from datetime import datetime, timedelta
 
 def _is_admin(update, context):
     ADMIN_ID = context.bot_data.get("ADMIN_ID")
-    ADMIN_GROUP_ID = context.bot_data.get("ADMIN_GROUP_ID")
-    return (
-        (update.effective_user and update.effective_user.id == ADMIN_ID)
-        or (update.effective_chat and update.effective_chat.id == ADMIN_GROUP_ID)
-    )
+    user_id = update.effective_user.id if update.effective_user else None
+    return user_id == ADMIN_ID
 
 async def admin_block(update: Update, context):
     if not _is_admin(update, context):
         await update.message.reply_text("Unauthorized.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /block <user_id or @username>")
         return
     identifier = context.args[0]
     user = await get_user(identifier)
@@ -31,6 +31,9 @@ async def admin_unblock(update: Update, context):
     if not _is_admin(update, context):
         await update.message.reply_text("Unauthorized.")
         return
+    if not context.args:
+        await update.message.reply_text("Usage: /unblock <user_id or @username>")
+        return
     identifier = context.args[0]
     user = await get_user(identifier)
     if not user and identifier.startswith("@"):
@@ -47,6 +50,9 @@ async def admin_setpremium(update: Update, context):
     if not _is_admin(update, context):
         await update.message.reply_text("Unauthorized.")
         return
+    if not context.args:
+        await update.message.reply_text("Usage: /setpremium <user_id or @username>")
+        return
     identifier = context.args[0]
     user = await get_user(identifier)
     if not user and identifier.startswith("@"):
@@ -59,9 +65,16 @@ async def admin_setpremium(update: Update, context):
     expiry = await approve_premium(user["user_id"])
     await update.message.reply_text(f"User {user['user_id']} promoted to premium until {expiry}")
 
+# Alias for promote
+async def admin_promote(update: Update, context):
+    return await admin_setpremium(update, context)
+
 async def admin_message(update: Update, context):
     if not _is_admin(update, context):
         await update.message.reply_text("Unauthorized.")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /message <user_id or @username> <text>")
         return
     user_id_or_username = context.args[0]
     text = " ".join(context.args[1:])
@@ -86,6 +99,9 @@ async def admin_blockword(update: Update, context):
     if not _is_admin(update, context):
         await update.message.reply_text("Unauthorized.")
         return
+    if not context.args:
+        await update.message.reply_text("Usage: /blockword <word>")
+        return
     word = context.args[0]
     await add_blocked_word(word)
     await update.message.reply_text(f"Blocked word '{word}' added.")
@@ -94,6 +110,9 @@ async def admin_unblockword(update: Update, context):
     if not _is_admin(update, context):
         await update.message.reply_text("Unauthorized.")
         return
+    if not context.args:
+        await update.message.reply_text("Usage: /unblockword <word>")
+        return
     word = context.args[0]
     await remove_blocked_word(word)
     await update.message.reply_text(f"Blocked word '{word}' removed.")
@@ -101,6 +120,9 @@ async def admin_unblockword(update: Update, context):
 async def admin_userinfo(update: Update, context):
     if not _is_admin(update, context):
         await update.message.reply_text("Unauthorized.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /userinfo <user_id or @username>")
         return
     identifier = context.args[0]
     user = await get_user(identifier)
@@ -126,6 +148,9 @@ async def admin_roominfo(update: Update, context):
     if not _is_admin(update, context):
         await update.message.reply_text("Unauthorized.")
         return
+    if not context.args:
+        await update.message.reply_text("Usage: /roominfo <room_id>")
+        return
     room_id = context.args[0]
     room = await get_room(room_id)
     if room:
@@ -149,6 +174,9 @@ async def admin_roominfo(update: Update, context):
 async def admin_viewhistory(update: Update, context):
     if not _is_admin(update, context):
         await update.message.reply_text("Unauthorized.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /viewhistory <room_id>")
         return
     room_id = context.args[0]
     history = await get_chat_history(room_id)
