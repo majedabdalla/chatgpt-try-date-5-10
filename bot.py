@@ -2,7 +2,7 @@ import os
 import logging
 import json
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
@@ -18,7 +18,7 @@ from handlers.admincmds import (
     admin_block, admin_unblock, admin_message, admin_stats, admin_blockword, admin_unblockword,
     admin_userinfo, admin_roominfo, admin_viewhistory, admin_setpremium
 )
-from handlers.match import find_command, search_conv, end_command, next_command
+from handlers.match import find_command, search_conv, end_command, next_command, open_filter_menu
 from handlers.forward import forward_to_admin
 from admin import downgrade_expired_premium
 from handlers.message_router import route_message
@@ -47,6 +47,14 @@ def load_locale(lang):
     except Exception:
         return {}
 
+def get_reply_keyboard(lang):
+    locale = load_locale(lang)
+    return ReplyKeyboardMarkup([
+        [KeyboardButton(locale.get("profile", "Profile")), KeyboardButton(locale.get("find", "Find")), KeyboardButton(locale.get("end_chat", "End Chat"))],
+        [KeyboardButton(locale.get("edit_profile", "Edit Profile")), KeyboardButton(locale.get("report_sent", "Report")), KeyboardButton(locale.get("upgrade_tip", "Upgrade"))],
+        [KeyboardButton("Premium Search Filters"), KeyboardButton(locale.get("menu_back", "Back"))]
+    ], resize_keyboard=True)
+
 async def reply_translated(update, context, key, **kwargs):
     user = update.effective_user
     lang = "en"
@@ -57,10 +65,9 @@ async def reply_translated(update, context, key, **kwargs):
     msg = locale.get(key, key)
     if kwargs:
         msg = msg.format(**kwargs)
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, reply_markup=get_reply_keyboard(lang))
 
 async def start(update: Update, context):
-    # Language selection on /start
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(locale, callback_data=f"lang_{code}")]
         for code, locale in LANGS.items()
@@ -76,43 +83,32 @@ async def language_select_callback(update: Update, context):
     lang = query.data.split("_", 1)[1]
     await update_user(query.from_user.id, {"language": lang})
     locale = load_locale(lang)
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton(locale["menu_back"], callback_data="back")]])
-    await query.edit_message_text(locale["profile_setup"], reply_markup=kb)
-    # Now go to profile setup
-    await start_profile(update, context)
+    user = await get_user(query.from_user.id)
+    # If user already has profile, show main menu
+    if user:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(locale.get("edit_profile", "Edit Profile"), callback_data="edit_profile")],
+            [InlineKeyboardButton(locale.get("find", "Find"), callback_data="menu_find")],
+            [InlineKeyboardButton(locale.get("upgrade_tip", "Upgrade"), callback_data="menu_upgrade")],
+            [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="back")]
+        ])
+        await query.edit_message_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
+    else:
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(locale["menu_back"], callback_data="back")]])
+        await query.edit_message_text(locale["profile_setup"], reply_markup=kb)
+        await start_profile(update, context)
 
-async def check_blocked(update: Update, context):
-    user = update.effective_user
-    dbuser = await db.users.find_one({"user_id": user.id})
-    if dbuser and dbuser.get("blocked"):
-        await reply_translated(update, context, "user_blocked", user_id=user.id)
-        return True
-    return False
-
-def is_admin(update: Update):
+def is_true_admin(update: Update):
     user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    return user_id == ADMIN_ID or chat_id == ADMIN_GROUP_ID
+    return user_id == ADMIN_ID
 
 async def error_handler(update, context):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
-
-async def set_admin_flag(update: Update, context):
-    ADMIN_ID = context.application.bot_data.get("ADMIN_ID")
-    ADMIN_GROUP_ID = context.application.bot_data.get("ADMIN_GROUP_ID")
-    user_id = update.effective_user.id if update.effective_user else None
-    chat_id = update.effective_chat.id if update.effective_chat else None
-    if user_id == ADMIN_ID or chat_id == ADMIN_GROUP_ID:
-        context.user_data["is_admin"] = True
-    else:
-        context.user_data["is_admin"] = False
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data["ADMIN_GROUP_ID"] = ADMIN_GROUP_ID
     app.bot_data["ADMIN_ID"] = ADMIN_ID
-
-    app.add_handler(MessageHandler(filters.ALL, set_admin_flag), group=-1)
 
     # Language selection keyboard
     app.add_handler(CommandHandler("start", start))
@@ -131,29 +127,33 @@ def main():
     )
     app.add_handler(profile_conv)
 
-    # Add premium search conversation
-    app.add_handler(search_conv)
-
-    # Admin commands
-    app.add_handler(CommandHandler("block", admin_block, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("unblock", admin_unblock, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("message", admin_message, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("stats", admin_stats, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("blockword", admin_blockword, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("unblockword", admin_unblockword, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("userinfo", admin_userinfo, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("roominfo", admin_roominfo, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("viewhistory", admin_viewhistory, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("setpremium", admin_setpremium, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-    app.add_handler(CommandHandler("promote", admin_setpremium, filters.User(ADMIN_ID) | filters.Chat(ADMIN_GROUP_ID)))
-
-    # User commands
-    app.add_handler(CommandHandler("profile", start_profile))
-    app.add_handler(CommandHandler("upgrade", start_upgrade))
-    app.add_handler(CommandHandler("report", report_partner))
+    # Main menu commands
     app.add_handler(CommandHandler("find", find_command))
     app.add_handler(CommandHandler("end", end_command))
     app.add_handler(CommandHandler("next", next_command))
+    app.add_handler(CommandHandler("profile", start_profile))
+    app.add_handler(CommandHandler("upgrade", start_upgrade))
+    app.add_handler(CommandHandler("report", report_partner))
+    app.add_handler(CommandHandler("filters", open_filter_menu))  # open filter menu anytime
+
+    # Inline menu handlers for filters
+    app.add_handler(CallbackQueryHandler(open_filter_menu, pattern="^menu_filter$"))
+
+    # Premium search conversation
+    app.add_handler(search_conv)
+
+    # Admin commands: only user with ADMIN_ID can use these
+    admin_filter = filters.User(ADMIN_ID)
+    app.add_handler(CommandHandler("block", admin_block, admin_filter))
+    app.add_handler(CommandHandler("unblock", admin_unblock, admin_filter))
+    app.add_handler(CommandHandler("message", admin_message, admin_filter))
+    app.add_handler(CommandHandler("stats", admin_stats, admin_filter))
+    app.add_handler(CommandHandler("blockword", admin_blockword, admin_filter))
+    app.add_handler(CommandHandler("unblockword", admin_unblockword, admin_filter))
+    app.add_handler(CommandHandler("userinfo", admin_userinfo, admin_filter))
+    app.add_handler(CommandHandler("roominfo", admin_roominfo, admin_filter))
+    app.add_handler(CommandHandler("viewhistory", admin_viewhistory, admin_filter))
+    app.add_handler(CommandHandler("setpremium", admin_setpremium, admin_filter))
 
     # Admin approve/decline callback
     app.add_handler(CallbackQueryHandler(admin_callback))
