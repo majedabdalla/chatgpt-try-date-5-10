@@ -2,7 +2,7 @@ import os
 import logging
 import json
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
@@ -18,7 +18,7 @@ from handlers.admincmds import (
     admin_block, admin_unblock, admin_message, admin_stats, admin_blockword, admin_unblockword,
     admin_userinfo, admin_roominfo, admin_viewhistory, admin_setpremium
 )
-from handlers.match import find_command, search_conv, end_command, next_command, open_filter_menu, menu_callback_handler
+from handlers.match import find_command, search_conv, end_command, next_command, open_filter_menu, menu_callback_handler, select_filter_cb
 from handlers.forward import forward_to_admin
 from admin import downgrade_expired_premium
 from handlers.message_router import route_message
@@ -47,14 +47,6 @@ def load_locale(lang):
     except Exception:
         return {}
 
-def get_reply_keyboard(lang):
-    locale = load_locale(lang)
-    return ReplyKeyboardMarkup([
-        [locale.get("profile", "Profile"), locale.get("find", "Find"), locale.get("end_chat", "End Chat")],
-        [locale.get("edit_profile", "Edit Profile"), locale.get("report_sent", "Report"), locale.get("upgrade_tip", "Upgrade")],
-        ["Filters", locale.get("menu_back", "Back")]
-    ], resize_keyboard=True)
-
 async def reply_translated(update, context, key, **kwargs):
     user = update.effective_user
     lang = "en"
@@ -65,7 +57,7 @@ async def reply_translated(update, context, key, **kwargs):
     msg = locale.get(key, key)
     if kwargs:
         msg = msg.format(**kwargs)
-    await update.message.reply_text(msg, reply_markup=get_reply_keyboard(lang))
+    await update.message.reply_text(msg)
 
 async def start(update: Update, context):
     # Language selection on /start
@@ -115,7 +107,7 @@ async def main_menu(update: Update, context):
         [InlineKeyboardButton("Filters", callback_data="menu_filter")],
         [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="menu_back")]
     ])
-    await update.effective_message.reply_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb, reply_markup=get_reply_keyboard(lang))
+    await update.effective_message.reply_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
 
 async def menu_callback_handler_entry(update: Update, context):
     await menu_callback_handler(update, context)
@@ -137,6 +129,7 @@ def main():
     # Inline menu callback handler for ALL menu actions
     app.add_handler(CallbackQueryHandler(language_select_callback, pattern="^lang_"))
     app.add_handler(CallbackQueryHandler(menu_callback_handler_entry, pattern="^menu_"))
+    app.add_handler(CallbackQueryHandler(select_filter_cb, pattern="^(filter_|gender_|region_|country_|language_|back)$"))
 
     # Profile setup conversation
     profile_conv = ConversationHandler(
