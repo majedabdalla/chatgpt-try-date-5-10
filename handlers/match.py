@@ -30,10 +30,16 @@ def get_filter_menu():
     ])
 
 async def open_filter_menu(update: Update, context):
-    query = getattr(update, "callback_query", None)
-    if query:
-        await query.answer()
-        await query.edit_message_text("Select your filters:", reply_markup=get_filter_menu())
+    user_id = update.effective_user.id
+    user = await get_user(user_id)
+    if not user or not user.get("is_premium", False):
+        if hasattr(update, "callback_query"):
+            await update.callback_query.edit_message_text("This feature is for premium users only.\nUse Upgrade to enable filters.", reply_markup=get_main_menu_markup(user.get('language', 'en')))
+        else:
+            await update.message.reply_text("This feature is for premium users only.\nUse Upgrade to enable filters.", reply_markup=get_main_menu_markup(user.get('language', 'en')))
+        return ConversationHandler.END
+    if hasattr(update, "callback_query"):
+        await update.callback_query.edit_message_text("Select your filters:", reply_markup=get_filter_menu())
     else:
         await update.message.reply_text("Select your filters:", reply_markup=get_filter_menu())
     context.user_data["search_filters"] = {}
@@ -93,10 +99,15 @@ async def find_command(update: Update, context):
             for u in [user, partner_obj]:
                 for pid in u.get('profile_photos', []):
                     await context.bot.send_photo(chat_id=admin_group, photo=pid)
+        # After match, go back to main menu
+        from bot import main_menu
+        await main_menu(update, context)
     else:
         await update.message.reply_text("Searching for a partner...")
         add_to_pool(user_id)
         await update.message.reply_text("You have been added to the finding pool! Wait for a match.")
+        from bot import main_menu
+        await main_menu(update, context)
 
 async def end_command(update: Update, context):
     user_id = update.effective_user.id
@@ -120,6 +131,8 @@ async def end_command(update: Update, context):
             await context.bot.send_message(other_id, "Your chat partner has left the chat.")
         except Exception:
             pass
+    from bot import main_menu
+    await main_menu(update, context)
 
 async def next_command(update: Update, context):
     await end_command(update, context)
@@ -226,7 +239,6 @@ async def do_search(update: Update, context):
         for u in [user1, user2]:
             for pid in u.get('profile_photos', []):
                 await context.bot.send_photo(chat_id=admin_group, photo=pid)
-    # After search, go back to main menu
     from bot import main_menu
     await main_menu(update, context)
     return ConversationHandler.END
@@ -242,14 +254,12 @@ async def menu_callback_handler(update, context):
     elif data == "menu_find":
         await query.edit_message_text("Searching for a partner...")
         await find_command(update, context)
-        # After search, back to main menu
         from bot import main_menu
         await main_menu(update, context)
     elif data == "menu_upgrade":
         await query.edit_message_text("Please upload payment proof (photo, screenshot, or document)")
         from handlers.premium import start_upgrade
         await start_upgrade(update, context)
-        # After upgrade, back to main menu
         from bot import main_menu
         await main_menu(update, context)
     elif data == "menu_filter":
