@@ -10,6 +10,30 @@ COUNTRIES = ['Indonesia', 'Malaysia', 'India', 'Russia', 'Arab', 'USA', 'Iran', 
 GENDERS = ['male', 'female', 'other']
 LANGUAGES = ['en', 'ar', 'hi', 'id']
 
+def get_filter_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Filter by Gender", callback_data="filter_gender")],
+        [InlineKeyboardButton("Filter by Region", callback_data="filter_region")],
+        [InlineKeyboardButton("Filter by Country", callback_data="filter_country")],
+        [InlineKeyboardButton("Filter by Language", callback_data="filter_language")],
+        [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")],
+        [InlineKeyboardButton("Back", callback_data="back")]
+    ])
+
+async def open_filter_menu(update: Update, context):
+    # Can be called from /filters command or inline menu
+    user_id = update.effective_user.id
+    user = await get_user(user_id)
+    if not user or not user.get("is_premium", False):
+        await update.message.reply_text("This feature is for premium users only.")
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "Choose your search filters:",
+        reply_markup=get_filter_menu()
+    )
+    context.user_data["search_filters"] = {}
+    return SELECT_FILTER
+
 async def set_users_room_map(context, user1, user2, room_id):
     if "user_room_map" not in context.bot_data:
         context.bot_data["user_room_map"] = {}
@@ -60,7 +84,6 @@ async def find_command(update: Update, context):
             room = await get_room(room_id)
             txt = get_admin_room_meta(room, user_id, partner, [user, partner_obj])
             await context.bot.send_message(chat_id=admin_group, text=txt)
-            # Send profile photos
             for u in [user, partner_obj]:
                 for pid in u.get('profile_photos', []):
                     await context.bot.send_photo(chat_id=admin_group, photo=pid)
@@ -95,26 +118,6 @@ async def next_command(update: Update, context):
     await end_command(update, context)
     await find_command(update, context)
 
-async def search_command(update: Update, context):
-    user_id = update.effective_user.id
-    user = await get_user(user_id)
-    if not user or not user.get("is_premium", False):
-        await update.message.reply_text("This feature is for premium users only.")
-        return ConversationHandler.END
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Filter by Gender", callback_data="filter_gender")],
-        [InlineKeyboardButton("Filter by Region", callback_data="filter_region")],
-        [InlineKeyboardButton("Filter by Country", callback_data="filter_country")],
-        [InlineKeyboardButton("Filter by Language", callback_data="filter_language")],
-        [InlineKeyboardButton("Proceed without filters", callback_data="filter_none")]
-    ])
-    await update.message.reply_text(
-        "Choose your search filters. You can apply one or more (repeat this menu to add more filters). When ready, press 'Proceed without filters' to search.",
-        reply_markup=kb
-    )
-    context.user_data["search_filters"] = {}
-    return SELECT_FILTER
-
 async def select_filter_cb(update: Update, context):
     query = update.callback_query
     await query.answer()
@@ -123,43 +126,41 @@ async def select_filter_cb(update: Update, context):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Male", callback_data="gender_male"),
              InlineKeyboardButton("Female", callback_data="gender_female"),
-             InlineKeyboardButton("Other", callback_data="gender_other")]
+             InlineKeyboardButton("Other", callback_data="gender_other")],
+            [InlineKeyboardButton("Back", callback_data="back")]
         ])
         await query.edit_message_text("Select preferred gender:", reply_markup=kb)
         return SELECT_GENDER
     if data == "filter_region":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(region, callback_data=f"region_{region}")] for region in REGIONS
-        ])
+        ] + [[InlineKeyboardButton("Back", callback_data="back")]])
         await query.edit_message_text("Select preferred region:", reply_markup=kb)
         return SELECT_REGION
     if data == "filter_country":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(country, callback_data=f"country_{country}")] for country in COUNTRIES
-        ])
+        ] + [[InlineKeyboardButton("Back", callback_data="back")]])
         await query.edit_message_text("Select preferred country:", reply_markup=kb)
         return SELECT_COUNTRY
     if data == "filter_language":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(lang.upper(), callback_data=f"language_{lang}")] for lang in LANGUAGES
-        ])
+        ] + [[InlineKeyboardButton("Back", callback_data="back")]])
         await query.edit_message_text("Select preferred language:", reply_markup=kb)
         return SELECT_LANGUAGE
     if data == "filter_none":
         return await do_search(update, context)
+    if data == "back":
+        await query.edit_message_text("Choose your search filters:", reply_markup=get_filter_menu())
+        return SELECT_FILTER
 
 async def set_gender_cb(update: Update, context):
     query = update.callback_query
     await query.answer()
     gender = query.data.split('_', 1)[1]
     context.user_data["search_filters"]["gender"] = gender
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Add Region Filter", callback_data="filter_region")],
-        [InlineKeyboardButton("Add Country Filter", callback_data="filter_country")],
-        [InlineKeyboardButton("Add Language Filter", callback_data="filter_language")],
-        [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")]
-    ])
-    await query.edit_message_text(f"Gender filter set: {gender}. Add more filters or proceed.", reply_markup=kb)
+    await query.edit_message_text(f"Gender filter set: {gender}.", reply_markup=get_filter_menu())
     return SELECT_FILTER
 
 async def set_region_cb(update: Update, context):
@@ -167,13 +168,7 @@ async def set_region_cb(update: Update, context):
     await query.answer()
     region = query.data.split('_', 1)[1]
     context.user_data["search_filters"]["region"] = region
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Add Gender Filter", callback_data="filter_gender")],
-        [InlineKeyboardButton("Add Country Filter", callback_data="filter_country")],
-        [InlineKeyboardButton("Add Language Filter", callback_data="filter_language")],
-        [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")]
-    ])
-    await query.edit_message_text(f"Region filter set: {region}. Add more filters or proceed.", reply_markup=kb)
+    await query.edit_message_text(f"Region filter set: {region}.", reply_markup=get_filter_menu())
     return SELECT_FILTER
 
 async def set_country_cb(update: Update, context):
@@ -181,13 +176,7 @@ async def set_country_cb(update: Update, context):
     await query.answer()
     country = query.data.split('_', 1)[1]
     context.user_data["search_filters"]["country"] = country
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Add Gender Filter", callback_data="filter_gender")],
-        [InlineKeyboardButton("Add Region Filter", callback_data="filter_region")],
-        [InlineKeyboardButton("Add Language Filter", callback_data="filter_language")],
-        [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")]
-    ])
-    await query.edit_message_text(f"Country filter set: {country}. Add more filters or proceed.", reply_markup=kb)
+    await query.edit_message_text(f"Country filter set: {country}.", reply_markup=get_filter_menu())
     return SELECT_FILTER
 
 async def set_language_cb(update: Update, context):
@@ -195,13 +184,7 @@ async def set_language_cb(update: Update, context):
     await query.answer()
     language = query.data.split('_', 1)[1]
     context.user_data["search_filters"]["language"] = language
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Add Gender Filter", callback_data="filter_gender")],
-        [InlineKeyboardButton("Add Region Filter", callback_data="filter_region")],
-        [InlineKeyboardButton("Add Country Filter", callback_data="filter_country")],
-        [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")]
-    ])
-    await query.edit_message_text(f"Language filter set: {language}. Add more filters or proceed.", reply_markup=kb)
+    await query.edit_message_text(f"Language filter set: {language}.", reply_markup=get_filter_menu())
     return SELECT_FILTER
 
 async def do_search(update: Update, context):
@@ -227,7 +210,7 @@ async def do_search(update: Update, context):
         if ok:
             candidates.append(uid)
     if not candidates:
-        await query.edit_message_text("No users found matching your criteria. Try again later.")
+        await query.edit_message_text("No users found matching your criteria. Try again later.", reply_markup=get_filter_menu())
         return ConversationHandler.END
     partner = random.choice(candidates)
     users_online.discard(query.from_user.id)
@@ -249,13 +232,13 @@ async def do_search(update: Update, context):
     return ConversationHandler.END
 
 search_conv = ConversationHandler(
-    entry_points=[CommandHandler('searchmypreferences', search_command)],
+    entry_points=[CommandHandler('searchmypreferences', open_filter_menu)],
     states={
-        SELECT_FILTER: [CallbackQueryHandler(select_filter_cb, pattern="^filter_")],
-        SELECT_GENDER: [CallbackQueryHandler(set_gender_cb, pattern="^gender_")],
-        SELECT_REGION: [CallbackQueryHandler(set_region_cb, pattern="^region_")],
-        SELECT_COUNTRY: [CallbackQueryHandler(set_country_cb, pattern="^country_")],
-        SELECT_LANGUAGE: [CallbackQueryHandler(set_language_cb, pattern="^language_")]
+        SELECT_FILTER: [CallbackQueryHandler(select_filter_cb, pattern="^filter_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
+        SELECT_GENDER: [CallbackQueryHandler(set_gender_cb, pattern="^gender_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
+        SELECT_REGION: [CallbackQueryHandler(set_region_cb, pattern="^region_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
+        SELECT_COUNTRY: [CallbackQueryHandler(set_country_cb, pattern="^country_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
+        SELECT_LANGUAGE: [CallbackQueryHandler(set_language_cb, pattern="^language_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")]
     },
     fallbacks=[]
 )
