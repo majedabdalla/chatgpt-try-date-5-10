@@ -18,7 +18,7 @@ from handlers.admincmds import (
     admin_block, admin_unblock, admin_message, admin_stats, admin_blockword, admin_unblockword,
     admin_userinfo, admin_roominfo, admin_viewhistory, admin_setpremium
 )
-from handlers.match import find_command, search_conv, end_command, next_command, open_filter_menu
+from handlers.match import find_command, search_conv, end_command, next_command, open_filter_menu, menu_callback_handler
 from handlers.forward import forward_to_admin
 from admin import downgrade_expired_premium
 from handlers.message_router import route_message
@@ -50,9 +50,9 @@ def load_locale(lang):
 def get_reply_keyboard(lang):
     locale = load_locale(lang)
     return ReplyKeyboardMarkup([
-        [KeyboardButton(locale.get("profile", "Profile")), KeyboardButton(locale.get("find", "Find")), KeyboardButton(locale.get("end_chat", "End Chat"))],
-        [KeyboardButton(locale.get("edit_profile", "Edit Profile")), KeyboardButton(locale.get("report_sent", "Report")), KeyboardButton(locale.get("upgrade_tip", "Upgrade"))],
-        [KeyboardButton("Premium Search Filters"), KeyboardButton(locale.get("menu_back", "Back"))]
+        [locale.get("profile", "Profile"), locale.get("find", "Find"), locale.get("end_chat", "End Chat")],
+        [locale.get("edit_profile", "Edit Profile"), locale.get("report_sent", "Report"), locale.get("upgrade_tip", "Upgrade")],
+        ["Filters", locale.get("menu_back", "Back")]
     ], resize_keyboard=True)
 
 async def reply_translated(update, context, key, **kwargs):
@@ -68,6 +68,7 @@ async def reply_translated(update, context, key, **kwargs):
     await update.message.reply_text(msg, reply_markup=get_reply_keyboard(lang))
 
 async def start(update: Update, context):
+    # Language selection on /start
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(locale, callback_data=f"lang_{code}")]
         for code, locale in LANGS.items()
@@ -87,14 +88,15 @@ async def language_select_callback(update: Update, context):
     # If user already has profile, show main menu
     if user:
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(locale.get("edit_profile", "Edit Profile"), callback_data="edit_profile")],
+            [InlineKeyboardButton(locale.get("edit_profile", "Edit Profile"), callback_data="menu_edit_profile")],
             [InlineKeyboardButton(locale.get("find", "Find"), callback_data="menu_find")],
             [InlineKeyboardButton(locale.get("upgrade_tip", "Upgrade"), callback_data="menu_upgrade")],
-            [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="back")]
+            [InlineKeyboardButton("Filters", callback_data="menu_filter")],
+            [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="menu_back")]
         ])
         await query.edit_message_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
     else:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(locale["menu_back"], callback_data="back")]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(locale["menu_back"], callback_data="menu_back")]])
         await query.edit_message_text(locale["profile_setup"], reply_markup=kb)
         await start_profile(update, context)
 
@@ -102,17 +104,39 @@ def is_true_admin(update: Update):
     user_id = update.effective_user.id
     return user_id == ADMIN_ID
 
-async def error_handler(update, context):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+async def main_menu(update: Update, context):
+    user = await get_user(update.effective_user.id)
+    lang = user.get("language", "en") if user else "en"
+    locale = load_locale(lang)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(locale.get("edit_profile", "Edit Profile"), callback_data="menu_edit_profile")],
+        [InlineKeyboardButton(locale.get("find", "Find"), callback_data="menu_find")],
+        [InlineKeyboardButton(locale.get("upgrade_tip", "Upgrade"), callback_data="menu_upgrade")],
+        [InlineKeyboardButton("Filters", callback_data="menu_filter")],
+        [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="menu_back")]
+    ])
+    await update.effective_message.reply_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb, reply_markup=get_reply_keyboard(lang))
+
+async def menu_callback_handler_entry(update: Update, context):
+    await menu_callback_handler(update, context)
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data["ADMIN_GROUP_ID"] = ADMIN_GROUP_ID
     app.bot_data["ADMIN_ID"] = ADMIN_ID
 
-    # Language selection keyboard
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("profile", start_profile))
+    app.add_handler(CommandHandler("find", find_command))
+    app.add_handler(CommandHandler("end", end_command))
+    app.add_handler(CommandHandler("next", next_command))
+    app.add_handler(CommandHandler("upgrade", start_upgrade))
+    app.add_handler(CommandHandler("report", report_partner))
+    app.add_handler(CommandHandler("filters", open_filter_menu))
+
+    # Inline menu callback handler for ALL menu actions
     app.add_handler(CallbackQueryHandler(language_select_callback, pattern="^lang_"))
+    app.add_handler(CallbackQueryHandler(menu_callback_handler_entry, pattern="^menu_"))
 
     # Profile setup conversation
     profile_conv = ConversationHandler(
@@ -126,18 +150,6 @@ def main():
         fallbacks=[]
     )
     app.add_handler(profile_conv)
-
-    # Main menu commands
-    app.add_handler(CommandHandler("find", find_command))
-    app.add_handler(CommandHandler("end", end_command))
-    app.add_handler(CommandHandler("next", next_command))
-    app.add_handler(CommandHandler("profile", start_profile))
-    app.add_handler(CommandHandler("upgrade", start_upgrade))
-    app.add_handler(CommandHandler("report", report_partner))
-    app.add_handler(CommandHandler("filters", open_filter_menu))  # open filter menu anytime
-
-    # Inline menu handlers for filters
-    app.add_handler(CallbackQueryHandler(open_filter_menu, pattern="^menu_filter$"))
 
     # Premium search conversation
     app.add_handler(search_conv)
@@ -162,7 +174,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof))
 
     app.add_handler(MessageHandler(~filters.COMMAND, route_message))
-    app.add_error_handler(error_handler)
+    app.add_error_handler(lambda update, context: logger.error(msg="Exception while handling an update:", exc_info=context.error))
 
     async def expiry_job(context):
         await downgrade_expired_premium()
