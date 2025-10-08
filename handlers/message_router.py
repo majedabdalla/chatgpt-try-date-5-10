@@ -1,6 +1,6 @@
 from telegram import Update
 from telegram.ext import ContextTypes
-from db import get_room, log_chat, get_blocked_words
+from db import get_room, log_chat, get_blocked_words, get_user
 import time
 
 user_rate_limit = {}
@@ -34,7 +34,6 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "text": text,
             "timestamp": now
         })
-        from db import get_room
         room = await get_room(room_id)
         if not room or "users" not in room:
             await message.reply_text("Chat room error. Please use /find again.")
@@ -44,12 +43,11 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await message.reply_text("Your chat partner is not available.")
             return
         other_id = other_id[0]
-        # Forward to matched partner
         await message.copy(chat_id=other_id)
-        # Forward to admin group
         if ADMIN_GROUP_ID:
-            await message.forward(chat_id=ADMIN_GROUP_ID)
+            from handlers.forward import forward_to_admin
+            await forward_to_admin(update, context)
     else:
-        # Not in a room: only forward to admin group
         if ADMIN_GROUP_ID:
-            await message.forward(chat_id=ADMIN_GROUP_ID)
+            from handlers.forward import forward_to_admin
+            await forward_to_admin(update, context)
