@@ -1,5 +1,5 @@
 from telegram import Update
-from admin import block_user, unblock_user, send_admin_message, get_stats, add_blocked_word, remove_blocked_word, approve_premium
+from admin import block_user, unblock_user, send_admin_message, get_stats, add_blocked_word, remove_blocked_word, approve_premium, reset_premium
 from db import get_user, get_user_by_username, get_room, get_chat_history
 from datetime import datetime, timedelta
 
@@ -65,9 +65,24 @@ async def admin_setpremium(update: Update, context):
     expiry = await approve_premium(user["user_id"])
     await update.message.reply_text(f"User {user['user_id']} promoted to premium until {expiry}")
 
-# Alias for promote
-async def admin_promote(update: Update, context):
-    return await admin_setpremium(update, context)
+async def admin_resetpremium(update: Update, context):
+    if not _is_admin(update, context):
+        await update.message.reply_text("Unauthorized.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /resetpremium <user_id or @username>")
+        return
+    identifier = context.args[0]
+    user = await get_user(identifier)
+    if not user and identifier.startswith("@"):
+        user = await get_user_by_username(identifier[1:])
+    if not user:
+        user = await get_user_by_username(identifier)
+    if not user:
+        await update.message.reply_text("User not found.")
+        return
+    await reset_premium(user["user_id"])
+    await update.message.reply_text(f"User {user['user_id']} reset to free user.")
 
 async def admin_message(update: Update, context):
     if not _is_admin(update, context):
