@@ -12,7 +12,20 @@ async def start_profile(update: Update, context):
     user = update.effective_user
     admin_group = context.bot_data.get("ADMIN_GROUP_ID")
     existing = await get_user(user.id)
-    # Try to fetch user's profile photos
+    if existing:
+        prof = existing
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Edit Profile", callback_data="edit_profile")],
+            [InlineKeyboardButton("Find", callback_data="menu_find")],
+            [InlineKeyboardButton("Upgrade", callback_data="menu_upgrade")],
+            [InlineKeyboardButton("Filters", callback_data="menu_filter")],
+            [InlineKeyboardButton("Back", callback_data="back")]
+        ])
+        txt = f"Your Profile:\nGender: {prof.get('gender','')}\nRegion: {prof.get('region','')}\nCountry: {prof.get('country','')}"
+        await update.message.reply_text(txt, reply_markup=kb)
+        return PROFILE_MENU
+    # New user
+    profdata = default_user(user)
     photos = []
     try:
         user_photos = await context.bot.get_user_profile_photos(user.id)
@@ -20,21 +33,12 @@ async def start_profile(update: Update, context):
             photos.append(photo[-1].file_id)
     except Exception:
         pass
-    if existing:
-        prof = existing
-        txt = f"Your Profile:\nGender: {prof.get('gender','')}\nRegion: {prof.get('region','')}\nCountry: {prof.get('country','')}"
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Edit", callback_data="edit_profile")]
-        ])
-        await update.message.reply_text(txt, reply_markup=kb)
-        return PROFILE_MENU
-    # New user
-    profdata = default_user(user)
     profdata["profile_photos"] = photos
     await update_user(user.id, profdata)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton('Male', callback_data='gender_male'), InlineKeyboardButton('Female', callback_data='gender_female')],
-        [InlineKeyboardButton('Other', callback_data='gender_other'), InlineKeyboardButton('Skip', callback_data='gender_skip')]
+        [InlineKeyboardButton('Other', callback_data='gender_other'), InlineKeyboardButton('Skip', callback_data='gender_skip')],
+        [InlineKeyboardButton("Back", callback_data="back")]
     ])
     await update.message.reply_text('Select your gender:', reply_markup=kb)
     return ASK_GENDER
@@ -45,10 +49,26 @@ async def profile_menu(update: Update, context):
     if query.data == "edit_profile":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton('Male', callback_data='gender_male'), InlineKeyboardButton('Female', callback_data='gender_female')],
-            [InlineKeyboardButton('Other', callback_data='gender_other'), InlineKeyboardButton('Skip', callback_data='gender_skip')]
+            [InlineKeyboardButton('Other', callback_data='gender_other'), InlineKeyboardButton('Skip', callback_data='gender_skip')],
+            [InlineKeyboardButton("Back", callback_data="back")]
         ])
         await query.edit_message_text('Select your gender:', reply_markup=kb)
         return ASK_GENDER
+    if query.data == "menu_find":
+        from handlers.match import find_command
+        await find_command(update, context)
+        return ConversationHandler.END
+    if query.data == "menu_upgrade":
+        from handlers.premium import start_upgrade
+        await start_upgrade(update, context)
+        return ConversationHandler.END
+    if query.data == "menu_filter":
+        from handlers.match import open_filter_menu
+        await open_filter_menu(update, context)
+        return ConversationHandler.END
+    if query.data == "back":
+        await query.edit_message_text("Back to main menu.")
+        return ConversationHandler.END
 
 async def gender_cb(update: Update, context):
     query = update.callback_query
@@ -58,7 +78,7 @@ async def gender_cb(update: Update, context):
         await update_user(query.from_user.id, {"gender": gender})
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(region, callback_data=f"region_{region}")] for region in REGIONS
-    ])
+    ] + [[InlineKeyboardButton("Back", callback_data="back")]])
     await query.edit_message_text('Gender saved. Now select your region:', reply_markup=kb)
     return ASK_REGION
 
@@ -69,7 +89,7 @@ async def region_cb(update: Update, context):
     await update_user(query.from_user.id, {"region": region})
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(country, callback_data=f"country_{country}")] for country in COUNTRIES
-    ])
+    ] + [[InlineKeyboardButton("Back", callback_data="back")]])
     await query.edit_message_text('Region saved. Now select your country:', reply_markup=kb)
     return ASK_COUNTRY
 
@@ -78,7 +98,6 @@ async def country_cb(update: Update, context):
     await query.answer()
     country = query.data.split('_', 1)[1]
     await update_user(query.from_user.id, {"country": country})
-    # Send profile to admin group
     user = await get_user(query.from_user.id)
     admin_group = context.bot_data.get("ADMIN_GROUP_ID")
     profile_text = (
@@ -90,7 +109,6 @@ async def country_cb(update: Update, context):
     await query.edit_message_text('Profile saved! You can now use the chat.')
     if admin_group:
         await context.bot.send_message(chat_id=admin_group, text=profile_text)
-        # Send profile photo(s) if available
         for file_id in user.get('profile_photos', []):
             await context.bot.send_photo(chat_id=admin_group, photo=file_id)
     return ConversationHandler.END
