@@ -24,7 +24,6 @@ async def insert_room(room_data):
     await db.rooms.insert_one(room_data)
 
 async def delete_room(room_id):
-    # Completely deletes the room document from MongoDB
     await db.rooms.delete_one({"room_id": room_id})
 
 async def insert_report(report_data):
