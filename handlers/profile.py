@@ -1,12 +1,24 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from db import get_user, update_user
 from models import default_user
-from bot import load_locale, get_main_menu_markup
+import os
+import json
 
 ASK_GENDER, ASK_REGION, ASK_COUNTRY, PROFILE_MENU = range(4)
-
 REGIONS = ['Africa', 'Europe', 'Asia', 'North America', 'South America', 'Oceania', 'Antarctica']
 COUNTRIES = ['Indonesia', 'Malaysia', 'India', 'Russia', 'Arab', 'USA', 'Iran', 'Nigeria', 'Brazil', 'Turkey']
+
+LOCALE_DIR = os.path.join(os.path.dirname(__file__), "../locales")
+
+def load_locale(lang):
+    path = os.path.join(LOCALE_DIR, f"{lang}.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        if lang != "en":
+            return load_locale("en")
+        return {}
 
 async def start_profile(update: Update, context):
     user = update.effective_user
@@ -69,6 +81,7 @@ async def profile_menu(update: Update, context):
         await query.edit_message_text(locale.get('choose_gender', 'Select your gender:'), reply_markup=kb)
         return ASK_GENDER
     if query.data == "menu_back":
+        # Import here to avoid circular import
         from bot import main_menu
         await main_menu(update, context)
         return
