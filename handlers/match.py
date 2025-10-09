@@ -1,5 +1,5 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ConversationHandler, CommandHandler, CallbackQueryHandler
 from db import get_user, get_room, delete_room
 from rooms import add_to_pool, remove_from_pool, users_online, create_room, close_room
 import random
@@ -31,6 +31,7 @@ async def open_filter_menu(update, context):
     return SELECT_FILTER
 
 async def menu_callback_handler(update, context):
+    # Handles ALL inline menu actions from main menu
     query = update.callback_query
     await query.answer()
     chat_id = query.message.chat_id
@@ -134,8 +135,13 @@ def get_admin_room_meta(room, user1, user2, users_data):
     return txt
 
 async def find_command(update, context):
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
+    # update can be Message or CallbackQuery, so get chat_id correctly
+    if hasattr(update, "effective_chat"):
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+    else:
+        chat_id = update.callback_query.message.chat.id
+        user_id = update.callback_query.from_user.id
     user = await get_user(user_id)
     if not user:
         await context.bot.send_message(chat_id, "Please setup your profile first with /profile.")
