@@ -10,15 +10,6 @@ COUNTRIES = ['Indonesia', 'Malaysia', 'India', 'Russia', 'Arab', 'USA', 'Iran', 
 GENDERS = ['male', 'female', 'other']
 LANGUAGES = ['en', 'ar', 'hi', 'id']
 
-def get_main_menu_markup(lang="en"):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Profile", callback_data="menu_profile")],
-        [InlineKeyboardButton("Find", callback_data="menu_find")],
-        [InlineKeyboardButton("Upgrade", callback_data="menu_upgrade")],
-        [InlineKeyboardButton("Filters", callback_data="menu_filter")],
-        [InlineKeyboardButton("Back", callback_data="menu_back")]
-    ])
-
 def get_filter_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Filter by Gender", callback_data="filter_gender")],
@@ -26,24 +17,98 @@ def get_filter_menu():
         [InlineKeyboardButton("Filter by Country", callback_data="filter_country")],
         [InlineKeyboardButton("Filter by Language", callback_data="filter_language")],
         [InlineKeyboardButton("Proceed to Search", callback_data="filter_none")],
-        [InlineKeyboardButton("Main Menu", callback_data="menu_back")]
+        [InlineKeyboardButton("Back", callback_data="back")]
     ])
 
 async def open_filter_menu(update: Update, context):
     user_id = update.effective_user.id
     user = await get_user(user_id)
     if not user or not user.get("is_premium", False):
-        if hasattr(update, "callback_query"):
-            await update.callback_query.edit_message_text("This feature is for premium users only.\nUse Upgrade to enable filters.", reply_markup=get_main_menu_markup(user.get('language', 'en')))
-        else:
-            await update.message.reply_text("This feature is for premium users only.\nUse Upgrade to enable filters.", reply_markup=get_main_menu_markup(user.get('language', 'en')))
+        await update.message.reply_text("This feature is for premium users only.")
         return ConversationHandler.END
-    if hasattr(update, "callback_query"):
-        await update.callback_query.edit_message_text("Select your filters:", reply_markup=get_filter_menu())
-    else:
-        await update.message.reply_text("Select your filters:", reply_markup=get_filter_menu())
+    await update.message.reply_text(
+        "Choose your search filters:",
+        reply_markup=get_filter_menu()
+    )
     context.user_data["search_filters"] = {}
     return SELECT_FILTER
+
+async def menu_callback_handler(update, context):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == "menu_edit_profile":
+        from handlers.profile import start_profile
+        await start_profile(update, context)
+    elif data == "menu_find":
+        await find_command(update, context)
+    elif data == "menu_upgrade":
+        from handlers.premium import start_upgrade
+        await start_upgrade(update, context)
+    elif data == "menu_filter":
+        await open_filter_menu(update, context)
+    elif data == "menu_back":
+        from bot import main_menu
+        await main_menu(update, context)
+    else:
+        await query.edit_message_text("Unknown menu option.")
+
+async def select_filter_cb(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == "filter_gender":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Male", callback_data="gender_male"),
+             InlineKeyboardButton("Female", callback_data="gender_female"),
+             InlineKeyboardButton("Other", callback_data="gender_other")],
+            [InlineKeyboardButton("Back", callback_data="back")]
+        ])
+        await query.edit_message_text("Select preferred gender:", reply_markup=kb)
+        return SELECT_GENDER
+    if data == "filter_region":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(region, callback_data=f"region_{region}")] for region in REGIONS
+        ] + [[InlineKeyboardButton("Back", callback_data="back")]])
+        await query.edit_message_text("Select preferred region:", reply_markup=kb)
+        return SELECT_REGION
+    if data == "filter_country":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(country, callback_data=f"country_{country}")] for country in COUNTRIES
+        ] + [[InlineKeyboardButton("Back", callback_data="back")]])
+        await query.edit_message_text("Select preferred country:", reply_markup=kb)
+        return SELECT_COUNTRY
+    if data == "filter_language":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(lang.upper(), callback_data=f"language_{lang}")] for lang in LANGUAGES
+        ] + [[InlineKeyboardButton("Back", callback_data="back")]])
+        await query.edit_message_text("Select preferred language:", reply_markup=kb)
+        return SELECT_LANGUAGE
+    if data == "filter_none":
+        return await do_search(update, context)
+    if data == "back":
+        await query.edit_message_text("Choose your search filters:", reply_markup=get_filter_menu())
+        return SELECT_FILTER
+    if data.startswith("gender_"):
+        gender = data.split('_', 1)[1]
+        context.user_data.setdefault("search_filters", {})["gender"] = gender
+        await query.edit_message_text(f"Gender filter set: {gender}.", reply_markup=get_filter_menu())
+        return SELECT_FILTER
+    if data.startswith("region_"):
+        region = data.split('_', 1)[1]
+        context.user_data.setdefault("search_filters", {})["region"] = region
+        await query.edit_message_text(f"Region filter set: {region}.", reply_markup=get_filter_menu())
+        return SELECT_FILTER
+    if data.startswith("country_"):
+        country = data.split('_', 1)[1]
+        context.user_data.setdefault("search_filters", {})["country"] = country
+        await query.edit_message_text(f"Country filter set: {country}.", reply_markup=get_filter_menu())
+        return SELECT_FILTER
+    if data.startswith("language_"):
+        language = data.split('_', 1)[1]
+        context.user_data.setdefault("search_filters", {})["language"] = language
+        await query.edit_message_text(f"Language filter set: {language}.", reply_markup=get_filter_menu())
+        return SELECT_FILTER
 
 async def set_users_room_map(context, user1, user2, room_id):
     if "user_room_map" not in context.bot_data:
@@ -82,7 +147,6 @@ async def find_command(update: Update, context):
 
     candidates = [uid for uid in users_online if uid != user_id]
     if candidates:
-        await update.message.reply_text("Searching for a partner...")
         partner = random.choice(candidates)
         remove_from_pool(partner)
         room_id = await create_room(user_id, partner)
@@ -99,15 +163,9 @@ async def find_command(update: Update, context):
             for u in [user, partner_obj]:
                 for pid in u.get('profile_photos', []):
                     await context.bot.send_photo(chat_id=admin_group, photo=pid)
-        # After match, go back to main menu
-        from bot import main_menu
-        await main_menu(update, context)
     else:
-        await update.message.reply_text("Searching for a partner...")
         add_to_pool(user_id)
         await update.message.reply_text("You have been added to the finding pool! Wait for a match.")
-        from bot import main_menu
-        await main_menu(update, context)
 
 async def end_command(update: Update, context):
     user_id = update.effective_user.id
@@ -131,71 +189,10 @@ async def end_command(update: Update, context):
             await context.bot.send_message(other_id, "Your chat partner has left the chat.")
         except Exception:
             pass
-    from bot import main_menu
-    await main_menu(update, context)
 
 async def next_command(update: Update, context):
     await end_command(update, context)
     await find_command(update, context)
-
-async def select_filter_cb(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    if data == "filter_gender":
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Male", callback_data="gender_male"),
-             InlineKeyboardButton("Female", callback_data="gender_female"),
-             InlineKeyboardButton("Other", callback_data="gender_other")],
-            [InlineKeyboardButton("Main Menu", callback_data="menu_back")]
-        ])
-        await query.edit_message_text("Select gender filter:", reply_markup=kb)
-        return SELECT_GENDER
-    if data == "filter_region":
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(region, callback_data=f"region_{region}")] for region in REGIONS
-        ] + [[InlineKeyboardButton("Main Menu", callback_data="menu_back")]])
-        await query.edit_message_text("Select region filter:", reply_markup=kb)
-        return SELECT_REGION
-    if data == "filter_country":
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(country, callback_data=f"country_{country}")] for country in COUNTRIES
-        ] + [[InlineKeyboardButton("Main Menu", callback_data="menu_back")]])
-        await query.edit_message_text("Select country filter:", reply_markup=kb)
-        return SELECT_COUNTRY
-    if data == "filter_language":
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(lang.upper(), callback_data=f"language_{lang}")] for lang in LANGUAGES
-        ] + [[InlineKeyboardButton("Main Menu", callback_data="menu_back")]])
-        await query.edit_message_text("Select language filter:", reply_markup=kb)
-        return SELECT_LANGUAGE
-    if data == "filter_none":
-        await do_search(update, context)
-        return
-    if data == "menu_back":
-        from bot import main_menu
-        await main_menu(update, context)
-        return SELECT_FILTER
-    if data.startswith("gender_"):
-        gender = data.split('_', 1)[1]
-        context.user_data.setdefault("search_filters", {})["gender"] = gender
-        await query.edit_message_text(f"Gender filter set: {gender}.", reply_markup=get_filter_menu())
-        return SELECT_FILTER
-    if data.startswith("region_"):
-        region = data.split('_', 1)[1]
-        context.user_data.setdefault("search_filters", {})["region"] = region
-        await query.edit_message_text(f"Region filter set: {region}.", reply_markup=get_filter_menu())
-        return SELECT_FILTER
-    if data.startswith("country_"):
-        country = data.split('_', 1)[1]
-        context.user_data.setdefault("search_filters", {})["country"] = country
-        await query.edit_message_text(f"Country filter set: {country}.", reply_markup=get_filter_menu())
-        return SELECT_FILTER
-    if data.startswith("language_"):
-        language = data.split('_', 1)[1]
-        context.user_data.setdefault("search_filters", {})["language"] = language
-        await query.edit_message_text(f"Language filter set: {language}.", reply_markup=get_filter_menu())
-        return SELECT_FILTER
 
 async def do_search(update: Update, context):
     query = update.callback_query
@@ -239,45 +236,16 @@ async def do_search(update: Update, context):
         for u in [user1, user2]:
             for pid in u.get('profile_photos', []):
                 await context.bot.send_photo(chat_id=admin_group, photo=pid)
-    from bot import main_menu
-    await main_menu(update, context)
     return ConversationHandler.END
-
-# Main menu callback handler for inline menu actions
-async def menu_callback_handler(update, context):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    if data == "menu_profile":
-        from handlers.profile import show_profile_menu
-        await show_profile_menu(update, context)
-    elif data == "menu_find":
-        await query.edit_message_text("Searching for a partner...")
-        await find_command(update, context)
-        from bot import main_menu
-        await main_menu(update, context)
-    elif data == "menu_upgrade":
-        await query.edit_message_text("Please upload payment proof (photo, screenshot, or document)")
-        from handlers.premium import start_upgrade
-        await start_upgrade(update, context)
-        from bot import main_menu
-        await main_menu(update, context)
-    elif data == "menu_filter":
-        await open_filter_menu(update, context)
-    elif data == "menu_back":
-        from bot import main_menu
-        await main_menu(update, context)
-    else:
-        await query.edit_message_text("Unknown menu option.")
 
 search_conv = ConversationHandler(
     entry_points=[CommandHandler('searchmypreferences', open_filter_menu)],
     states={
-        SELECT_FILTER: [CallbackQueryHandler(select_filter_cb, pattern="^filter_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")],
-        SELECT_GENDER: [CallbackQueryHandler(select_filter_cb, pattern="^gender_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")],
-        SELECT_REGION: [CallbackQueryHandler(select_filter_cb, pattern="^region_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")],
-        SELECT_COUNTRY: [CallbackQueryHandler(select_filter_cb, pattern="^country_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")],
-        SELECT_LANGUAGE: [CallbackQueryHandler(select_filter_cb, pattern="^language_"), CallbackQueryHandler(select_filter_cb, pattern="^menu_back$")]
+        SELECT_FILTER: [CallbackQueryHandler(select_filter_cb, pattern="^filter_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
+        SELECT_GENDER: [CallbackQueryHandler(select_filter_cb, pattern="^gender_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
+        SELECT_REGION: [CallbackQueryHandler(select_filter_cb, pattern="^region_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
+        SELECT_COUNTRY: [CallbackQueryHandler(select_filter_cb, pattern="^country_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")],
+        SELECT_LANGUAGE: [CallbackQueryHandler(select_filter_cb, pattern="^language_"), CallbackQueryHandler(select_filter_cb, pattern="^back$")]
     },
     fallbacks=[]
 )
