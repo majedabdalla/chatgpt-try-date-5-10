@@ -1,5 +1,5 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler, CallbackQueryHandler, CommandHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ConversationHandler
 from db import get_user, get_room, delete_room
 from rooms import add_to_pool, remove_from_pool, users_online, create_room, close_room
 import random
@@ -20,42 +20,41 @@ def get_filter_menu():
         [InlineKeyboardButton("Back", callback_data="back")]
     ])
 
-async def open_filter_menu(update: Update, context):
+async def open_filter_menu(update, context):
     user_id = update.effective_user.id
     user = await get_user(user_id)
     if not user or not user.get("is_premium", False):
-        await update.message.reply_text("This feature is for premium users only.")
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "Choose your search filters:",
-        reply_markup=get_filter_menu()
-    )
+        await context.bot.send_message(update.effective_chat.id, "This feature is for premium users only.")
+        return SELECT_FILTER
+    await context.bot.send_message(update.effective_chat.id, "Choose your search filters:", reply_markup=get_filter_menu())
     context.user_data["search_filters"] = {}
     return SELECT_FILTER
 
 async def menu_callback_handler(update, context):
     query = update.callback_query
     await query.answer()
+    chat_id = query.message.chat_id
     data = query.data
     if data == "menu_edit_profile":
         from handlers.profile import start_profile
-        await start_profile(update, context)
+        await start_profile(query, context)
     elif data == "menu_find":
-        await find_command(update, context)
+        await find_command(query, context)
     elif data == "menu_upgrade":
         from handlers.premium import start_upgrade
-        await start_upgrade(update, context)
+        await start_upgrade(query, context)
     elif data == "menu_filter":
-        await open_filter_menu(update, context)
+        await open_filter_menu(query, context)
     elif data == "menu_back":
         from bot import main_menu
-        await main_menu(update, context)
+        await main_menu(query, context)
     else:
         await query.edit_message_text("Unknown menu option.")
 
-async def select_filter_cb(update: Update, context):
+async def select_filter_cb(update, context):
     query = update.callback_query
     await query.answer()
+    chat_id = query.message.chat_id
     data = query.data
     if data == "filter_gender":
         kb = InlineKeyboardMarkup([
@@ -134,15 +133,16 @@ def get_admin_room_meta(room, user1, user2, users_data):
           f"👤 User2:\n{meta(users_data[1])}\n"
     return txt
 
-async def find_command(update: Update, context):
+async def find_command(update, context):
+    chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     user = await get_user(user_id)
     if not user:
-        await update.message.reply_text("Please setup your profile first with /profile.")
+        await context.bot.send_message(chat_id, "Please setup your profile first with /profile.")
         return
 
     if user_id in context.bot_data.get("user_room_map", {}):
-        await update.message.reply_text("You are already in a chat. Use /end or /next to leave first.")
+        await context.bot.send_message(chat_id, "You are already in a chat. Use /end or /next to leave first.")
         return
 
     candidates = [uid for uid in users_online if uid != user_id]
@@ -152,7 +152,7 @@ async def find_command(update: Update, context):
         room_id = await create_room(user_id, partner)
         await set_users_room_map(context, user_id, partner, room_id)
         remove_from_pool(user_id)
-        await update.message.reply_text("🎉 Match found! Say hi to your partner.")
+        await context.bot.send_message(chat_id, "🎉 Match found! Say hi to your partner.")
         await context.bot.send_message(partner, "🎉 Match found! Say hi to your partner.")
         partner_obj = await get_user(partner)
         admin_group = context.bot_data.get('ADMIN_GROUP_ID')
@@ -165,14 +165,15 @@ async def find_command(update: Update, context):
                     await context.bot.send_photo(chat_id=admin_group, photo=pid)
     else:
         add_to_pool(user_id)
-        await update.message.reply_text("You have been added to the finding pool! Wait for a match.")
+        await context.bot.send_message(chat_id, "You have been added to the finding pool! Wait for a match.")
 
-async def end_command(update: Update, context):
+async def end_command(update, context):
+    chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     user_room_map = context.bot_data.get("user_room_map", {})
     room_id = user_room_map.get(user_id)
     if not room_id:
-        await update.message.reply_text("You are not in a room.")
+        await context.bot.send_message(chat_id, "You are not in a room.")
         return
     room = await get_room(room_id)
     other_id = None
@@ -183,18 +184,18 @@ async def end_command(update: Update, context):
                 other_id = uid
     await close_room(room_id)
     await delete_room(room_id)
-    await update.message.reply_text("You have left the chat.")
+    await context.bot.send_message(chat_id, "You have left the chat.")
     if other_id:
         try:
             await context.bot.send_message(other_id, "Your chat partner has left the chat.")
         except Exception:
             pass
 
-async def next_command(update: Update, context):
+async def next_command(update, context):
     await end_command(update, context)
     await find_command(update, context)
 
-async def do_search(update: Update, context):
+async def do_search(update, context):
     query = update.callback_query
     filters = context.user_data.get("search_filters", {})
     from db import get_user
