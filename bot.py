@@ -50,6 +50,22 @@ def load_locale(lang):
     except Exception:
         return {}
 
+def main_menu(update: Update, context):
+    user = update.effective_user
+    lang = "en"
+    dbuser = db.users.find_one({"user_id": user.id})
+    if dbuser and dbuser.get("language"):
+        lang = dbuser["language"]
+    locale = load_locale(lang)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(locale.get("edit_profile", "Edit Profile"), callback_data="menu_edit_profile")],
+        [InlineKeyboardButton(locale.get("find", "Find"), callback_data="menu_find")],
+        [InlineKeyboardButton(locale.get("upgrade_tip", "Upgrade"), callback_data="menu_upgrade")],
+        [InlineKeyboardButton("Filters", callback_data="menu_filter")],
+        [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="menu_back")]
+    ])
+    context.bot.send_message(update.effective_chat.id, locale.get("main_menu", "Main Menu:"), reply_markup=kb)
+
 async def start(update: Update, context):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(locale, callback_data=f"lang_{code}")]
@@ -62,29 +78,11 @@ async def start(update: Update, context):
 
 async def language_select_callback(update: Update, context):
     query = update.callback_query
-    await query.answer()
+    user_id = query.from_user.id
     lang = query.data.split("_", 1)[1]
-    await update_user(query.from_user.id, {"language": lang})
+    await update_user(user_id, {"language": lang})
     locale = load_locale(lang)
-    user = await get_user(query.from_user.id)
-    if user:
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(locale.get("edit_profile", "Edit Profile"), callback_data="menu_edit_profile")],
-            [InlineKeyboardButton(locale.get("find", "Find"), callback_data="menu_find")],
-            [InlineKeyboardButton(locale.get("upgrade_tip", "Upgrade"), callback_data="menu_upgrade")],
-            [InlineKeyboardButton("Filters", callback_data="menu_filter")],
-            [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="menu_back")]
-        ])
-        await query.edit_message_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
-    else:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(locale["menu_back"], callback_data="menu_back")]])
-        await query.edit_message_text(locale["profile_setup"], reply_markup=kb)
-        await start_profile(update, context)
-
-async def main_menu(update: Update, context):
-    user = await get_user(update.effective_user.id)
-    lang = user.get("language", "en") if user else "en"
-    locale = load_locale(lang)
+    user = await get_user(user_id)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(locale.get("edit_profile", "Edit Profile"), callback_data="menu_edit_profile")],
         [InlineKeyboardButton(locale.get("find", "Find"), callback_data="menu_find")],
@@ -92,7 +90,9 @@ async def main_menu(update: Update, context):
         [InlineKeyboardButton("Filters", callback_data="menu_filter")],
         [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="menu_back")]
     ])
-    await update.effective_message.reply_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
+    await query.edit_message_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
+    if not user:
+        await start_profile(update, context)
 
 async def menu_callback_handler_entry(update: Update, context):
     await menu_callback_handler(update, context)
@@ -102,7 +102,6 @@ def main():
     app.bot_data["ADMIN_GROUP_ID"] = ADMIN_GROUP_ID
     app.bot_data["ADMIN_ID"] = ADMIN_ID
 
-    # Main commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("profile", start_profile))
     app.add_handler(CommandHandler("find", find_command))
@@ -112,12 +111,10 @@ def main():
     app.add_handler(CommandHandler("report", report_partner))
     app.add_handler(CommandHandler("filters", open_filter_menu))
 
-    # Inline menu callback handler for ALL menu actions
     app.add_handler(CallbackQueryHandler(language_select_callback, pattern="^lang_"))
     app.add_handler(CallbackQueryHandler(menu_callback_handler_entry, pattern="^menu_"))
     app.add_handler(CallbackQueryHandler(select_filter_cb, pattern="^(filter_|gender_|region_|country_|language_|back)$"))
 
-    # Profile setup conversation
     profile_conv = ConversationHandler(
         entry_points=[CommandHandler('profile', start_profile)],
         states={
@@ -129,11 +126,8 @@ def main():
         fallbacks=[]
     )
     app.add_handler(profile_conv)
-
-    # Premium search conversation
     app.add_handler(search_conv)
 
-    # Admin commands: only user with ADMIN_ID can use
     admin_filter = filters.User(ADMIN_ID)
     app.add_handler(CommandHandler("block", admin_block, admin_filter))
     app.add_handler(CommandHandler("unblock", admin_unblock, admin_filter))
@@ -146,11 +140,8 @@ def main():
     app.add_handler(CommandHandler("viewhistory", admin_viewhistory, admin_filter))
     app.add_handler(CommandHandler("setpremium", admin_setpremium, admin_filter))
 
-    # Admin approve/decline callback
     app.add_handler(CallbackQueryHandler(admin_callback))
-
-    # Premium proof
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.STICKER, route_message))
     app.add_handler(MessageHandler(~filters.COMMAND, route_message))
     app.add_error_handler(lambda update, context: logger.error(msg="Exception while handling an update:", exc_info=context.error))
 
