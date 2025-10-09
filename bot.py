@@ -20,7 +20,7 @@ from handlers.admincmds import (
 )
 from handlers.match import (
     find_command, search_conv, end_command, next_command, open_filter_menu,
-    menu_callback_handler, select_filter_cb, get_main_menu_markup
+    menu_callback_handler, select_filter_cb, get_main_menu_markup, get_user_lang
 )
 from handlers.forward import forward_to_admin
 from admin import downgrade_expired_premium
@@ -48,24 +48,19 @@ def load_locale(lang):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
+        if lang != "en":
+            return load_locale("en")
         return {}
 
-def get_main_menu_markup(lang="en"):
-    locale = load_locale(lang)
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Profile", callback_data="menu_profile")],
-        [InlineKeyboardButton("Find", callback_data="menu_find")],
-        [InlineKeyboardButton("Upgrade", callback_data="menu_upgrade")],
-        [InlineKeyboardButton("Filters", callback_data="menu_filter")],
-        [InlineKeyboardButton("Back", callback_data="menu_back")]
-    ])
+def get_user_lang(user_id):
+    user = db.users.find_one({"user_id": user_id})
+    if user and user.get("language"):
+        return user["language"]
+    return "en"
 
 async def reply_translated(update, context, key, **kwargs):
     user = update.effective_user
-    lang = "en"
-    dbuser = await get_user(user.id)
-    if dbuser and dbuser.get("language"):
-        lang = dbuser["language"]
+    lang = get_user_lang(user.id)
     locale = load_locale(lang)
     msg = locale.get(key, key)
     if kwargs:
@@ -110,13 +105,6 @@ async def main_menu(update: Update, context):
 
 async def menu_callback_handler_entry(update: Update, context):
     await menu_callback_handler(update, context)
-
-def premium_proof_guard(update, context):
-    # Only accept photo/doc as proof if last pressed "Upgrade"
-    user_id = update.effective_user.id
-    if premium_proof_state.get(user_id, False):
-        return True
-    return False
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -164,8 +152,7 @@ def main():
     app.add_handler(CommandHandler("resetpremium", admin_resetpremium, admin_filter))
 
     app.add_handler(CallbackQueryHandler(admin_callback))
-    # Accept payment proof only after Upgrade button is pressed
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof, filter=premium_proof_guard))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_proof))
     app.add_handler(MessageHandler(~filters.COMMAND, route_message))
     app.add_error_handler(lambda update, context: logger.error(msg="Exception while handling an update:", exc_info=context.error))
 
