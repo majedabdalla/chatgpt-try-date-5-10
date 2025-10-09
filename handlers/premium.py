@@ -3,19 +3,21 @@ from db import get_user, update_user
 from admin import approve_premium
 from datetime import datetime, timedelta
 
-# Track which users are sending proof (only after upgrade button)
 premium_proof_state = {}
 
 async def start_upgrade(update: Update, context):
     user_id = update.effective_user.id
     premium_proof_state[user_id] = True
-    await update.effective_message.edit_text('Please upload payment proof (photo, screenshot, or document)')
+    user = await get_user(user_id)
+    lang = user.get("language", "en") if user else "en"
+    locale = load_locale(lang)
+    await update.effective_message.edit_text(locale.get("proof_request", 'Please upload payment proof (photo, screenshot, or document)'))
 
 async def handle_proof(update: Update, context):
     user_id = update.effective_user.id
     admin_group = int(context.bot_data.get('ADMIN_GROUP_ID'))
     if not premium_proof_state.get(user_id, False):
-        return  # Ignore proofs unless upgrade button pressed
+        return
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton('Approve', callback_data=f'approve:{user_id}'), InlineKeyboardButton('Decline', callback_data=f'decline:{user_id}')]
     ])
@@ -24,7 +26,6 @@ async def handle_proof(update: Update, context):
         await context.bot.copy_message(chat_id=admin_group, from_chat_id=update.effective_chat.id, message_id=update.message.message_id)
     await update.message.reply_text('Proof sent to admins for review.')
     premium_proof_state[user_id] = False
-    # After submitting, show main menu
     from bot import main_menu
     await main_menu(update, context)
 
