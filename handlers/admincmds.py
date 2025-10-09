@@ -155,7 +155,6 @@ async def admin_userinfo(update: Update, context):
         f"Premium: {user.get('is_premium', False)}"
     )
     await update.message.reply_text(txt)
-    # Send profile photos if available
     for pid in user.get('profile_photos', []):
         await context.bot.send_photo(chat_id=update.effective_chat.id, photo=pid)
 
