@@ -50,22 +50,6 @@ def load_locale(lang):
     except Exception:
         return {}
 
-def main_menu(update: Update, context):
-    user = update.effective_user
-    lang = "en"
-    dbuser = db.users.find_one({"user_id": user.id})
-    if dbuser and dbuser.get("language"):
-        lang = dbuser["language"]
-    locale = load_locale(lang)
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(locale.get("edit_profile", "Edit Profile"), callback_data="menu_edit_profile")],
-        [InlineKeyboardButton(locale.get("find", "Find"), callback_data="menu_find")],
-        [InlineKeyboardButton(locale.get("upgrade_tip", "Upgrade"), callback_data="menu_upgrade")],
-        [InlineKeyboardButton("Filters", callback_data="menu_filter")],
-        [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="menu_back")]
-    ])
-    context.bot.send_message(update.effective_chat.id, locale.get("main_menu", "Main Menu:"), reply_markup=kb)
-
 async def start(update: Update, context):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(locale, callback_data=f"lang_{code}")]
@@ -93,6 +77,20 @@ async def language_select_callback(update: Update, context):
     await query.edit_message_text(locale.get("main_menu", "Main Menu:"), reply_markup=kb)
     if not user:
         await start_profile(update, context)
+
+async def main_menu(update: Update, context):
+    user = await get_user(update.effective_user.id)
+    lang = user.get("language", "en") if user else "en"
+    locale = load_locale(lang)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(locale.get("edit_profile", "Edit Profile"), callback_data="menu_edit_profile")],
+        [InlineKeyboardButton(locale.get("find", "Find"), callback_data="menu_find")],
+        [InlineKeyboardButton(locale.get("upgrade_tip", "Upgrade"), callback_data="menu_upgrade")],
+        [InlineKeyboardButton("Filters", callback_data="menu_filter")],
+        [InlineKeyboardButton(locale.get("menu_back", "Back"), callback_data="menu_back")]
+    ])
+    chat_id = update.effective_chat.id
+    await context.bot.send_message(chat_id, locale.get("main_menu", "Main Menu:"), reply_markup=kb)
 
 async def menu_callback_handler_entry(update: Update, context):
     await menu_callback_handler(update, context)
@@ -141,7 +139,8 @@ def main():
     app.add_handler(CommandHandler("setpremium", admin_setpremium, admin_filter))
 
     app.add_handler(CallbackQueryHandler(admin_callback))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.STICKER, route_message))
+    # FIXED: use correct media filters!
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.Sticker, route_message))
     app.add_handler(MessageHandler(~filters.COMMAND, route_message))
     app.add_error_handler(lambda update, context: logger.error(msg="Exception while handling an update:", exc_info=context.error))
 
