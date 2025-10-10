@@ -140,7 +140,10 @@ def main():
 
     app.add_handler(CallbackQueryHandler(admin_callback))
     # FIXED: use correct media filters!
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.Sticker, route_message))
+    app.add_handler(MessageHandler(
+        filters.PHOTO | filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.Sticker,
+        route_message
+    ))
     app.add_handler(MessageHandler(~filters.COMMAND, route_message))
     app.add_error_handler(lambda update, context: logger.error(msg="Exception while handling an update:", exc_info=context.error))
 
